@@ -318,3 +318,49 @@ If the user requests an alternative approach:
 
 If the user wants additional items:
 1. Return to Stage 4 for the newly selected items
+
+## Platform Setup
+
+If no `cpp-perf-platform.yaml` exists, guide the user through interactive setup.
+
+**Ask these questions in order:**
+
+1. "What is your target architecture? (aarch64 / x86_64)"
+2. "What cross-compiler do you use? (e.g., aarch64-linux-gnu-g++, or 'local' if compiling natively)"
+3. "What compiler flags should I use? (e.g., -O2 -march=armv8.2-a)"
+4. "Do you have a sysroot path for cross-compilation? (optional, e.g., /opt/arm-sysroot)"
+5. "What is the SSH address of your target board? (e.g., user@192.168.1.100)"
+   - Also ask for port if non-standard
+   - Ask about SSH key path if not using ssh-agent
+   - Ask about jump host if needed
+6. "Which performance profile matches your target? Available profiles:"
+   - List files in `skills/cpp-perf/profiles/` directory
+   - If none match: "You can add a custom profile YAML or use the profiler to generate one (see Plan 3)"
+
+**Generate `cpp-perf-platform.yaml`:**
+
+```yaml
+platforms:
+  <board-name>:
+    compiler: <answer-2>
+    compiler_flags: "<answer-3>"
+    sysroot: <answer-4, omit if none>
+    host: <host-from-answer-5>
+    port: <port, default 22>
+    user: <user-from-answer-5>
+    key: <key-path, omit if using ssh-agent>
+    proxy: <jump-host, omit if none>
+    arch: <answer-1>
+    work_dir: /tmp/cpp-perf
+    profile: <answer-6>
+```
+
+Write the file to the project root and confirm with the user.
+
+**Verify connectivity:**
+
+```bash
+ssh -p <port> [-i <key>] <user>@<host> "echo 'cpp-perf connection OK' && uname -m"
+```
+
+If this succeeds, platform setup is complete.
