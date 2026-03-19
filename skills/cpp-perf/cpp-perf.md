@@ -45,3 +45,41 @@ Present a summary:
 > Context loaded: N related files.
 > Target platform: [from config].
 > Proceeding to analysis. Say 'stop' at any point to pause."
+
+## Stage 2: Static Analysis
+
+Analyze the target code across four layers. Use the loaded platform profile to quantify estimates.
+
+**Step 1 — Identify relevant layers:**
+
+Scan the code and determine which layers apply:
+- **Algorithm**: loops with O(n^2)+ patterns, linear search in large collections, redundant sorting
+- **Language**: pass-by-value of large objects, missing `std::move`, `string` concatenation in loops, virtual calls in hot paths
+- **Microarchitecture**: inner loops (vectorization candidates), conditional branches in hot paths, data dependency chains, AoS patterns with partial field access
+- **System**: structs crossing cache lines, 2D array column-major access, potential false sharing in multithreaded code
+
+**Step 2 — Consult knowledge base** (budget: up to 20% context window):
+
+1. For each relevant layer, use `Glob` to list pattern files: `skills/cpp-perf/knowledge/patterns/<layer>/*.md`
+2. **If no pattern files exist** (Plan 2 not yet implemented), skip this step and rely on LLM knowledge
+3. If pattern files exist, read the frontmatter of each (first 10 lines) to check `keywords`
+4. If any keyword matches a code characteristic, read the full pattern file
+5. Use the pattern's Detection, Transformation, and Expected Impact sections to inform your analysis
+
+**Step 3 — Consult library registry:**
+
+1. Read `skills/cpp-perf/knowledge/libraries.yaml`
+2. Scan the target code for standard library calls (`std::vector`, `std::sort`, `std::unordered_map`, `malloc`, math functions, etc.)
+3. For each match, note the high-performance alternative, its `integration` level, and `advantage`
+
+**Step 4 — Score each issue:**
+
+For each identified issue, calculate an estimated performance impact:
+- Use instruction latencies/throughputs from the platform profile
+- For memory issues, use cache sizes and latencies
+- Assign confidence level:
+  - **HIGH**: pure instruction count math (e.g., scalar vs vector loop)
+  - **MEDIUM**: involves cache behavior assumptions
+  - **LOW**: depends on runtime data patterns
+
+Collect all issues into a list sorted by estimated impact (highest first).
