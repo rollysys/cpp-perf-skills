@@ -74,13 +74,38 @@ Scan the code and determine which layers apply:
 
 **Step 4 — Score each issue:**
 
-For each identified issue, calculate an estimated performance impact:
-- Use instruction latencies/throughputs from the platform profile
-- For memory issues, use cache sizes and latencies
-- Assign confidence level:
-  - **HIGH**: pure instruction count math (e.g., scalar vs vector loop)
-  - **MEDIUM**: involves cache behavior assumptions
-  - **LOW**: depends on runtime data patterns
+For each identified issue, calculate an estimated performance impact using the formulas below. Use instruction latencies/throughputs from the loaded platform profile.
+
+**Cycle estimation formulas:**
+
+- **Loop throughput:**
+  `cycles = iterations × critical_path_latency`
+  where `critical_path_latency` = longest dependency chain latency across one iteration (not throughput — throughput only applies when there are no carried dependencies).
+  Example: a loop with a carried FP-add chain on A55 costs `iterations × 4` cycles, not `iterations × 0.5`.
+
+- **Branch misprediction cost:**
+  `branch_overhead = iterations × misprediction_rate × mispredict_penalty`
+  CRITICAL: `misprediction_rate` depends on both data pattern AND predictor quality. Well-predicted branches (>90% accuracy) cost almost nothing — do not flag them as HIGH. Only flag branches as HIGH when data is demonstrably random or unpredictable (e.g., random hash lookups, input-driven conditionals with no pattern). Predictable patterns — switch on enum value, loop bounds check, early-exit on sentinel — are handled near-perfectly by the branch predictor.
+
+- **Cache miss cost:**
+  `cache_miss_cost = miss_count × (next_level_latency - current_level_latency)`
+  Working set size vs cache size determines the miss rate. Measure or estimate working set first; do not assume cache misses without checking whether the data fits in L1/L2.
+
+- **Vectorization potential speedup:**
+  `speedup ≈ vector_width / dependency_chain_overhead`
+  4-wide NEON on fully independent data ≈ 4x. With a carried dependency chain spanning the full vector width, speedup collapses to near 1x. Always check whether the loop has a loop-carried dependency before claiming vectorization gain.
+
+**Sanity checks — run these before assigning HIGH:**
+
+1. "Would the compiler already optimize this?" — Check by reading the vectorization report flags (`-fopt-info-vec-missed` / `-Rpass-missed=loop-vectorize`) if compilation has occurred, or reason about whether the pattern is trivially auto-vectorizable.
+2. "Is the branch predictor likely to handle this well?" — Predictable patterns (switch on enum, loop-bound checks, sentinel checks) are NOT valid HIGH-confidence branch issues. Only flag when the data driving the branch is demonstrably random or adversarial.
+3. "Does the branchless alternative do MORE work than the branchy version?" — e.g., a branchless rewrite that unconditionally loads and computes a value that the branchy version conditionally skips may be *slower* on cache-sensitive paths. Always count the actual instructions and memory accesses, not just the branch removal.
+
+**Assign confidence level:**
+
+- **HIGH**: instruction-count math closes on a known hot loop, and for any branch issue, the data is verified to be unpredictable. The estimate is grounded in platform-profile latencies with no major unknowns.
+- **MEDIUM**: involves assumptions about cache behavior, branch prediction accuracy, or whether a loop is actually hot. Estimate is directionally correct but magnitude is uncertain.
+- **LOW**: depends on runtime data patterns (branch predictability, actual working set vs cache, input distribution). Must be verified by instrumentation (Stage 2.5) or benchmarking (Stage 4) before acting on it. Do not recommend code changes for LOW-confidence issues without measurement.
 
 Collect all issues into a list sorted by estimated impact (highest first).
 
