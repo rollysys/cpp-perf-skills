@@ -111,9 +111,9 @@ inline void record(const std::string& section, const std::string& key, double cy
 // ============================================================
 // Measurement helpers
 // ============================================================
-// Run a function N times, collect timing, return median cycles
+// Run a function N times, collect timing, return median in nanoseconds
 template <typename Fn>
-double measure_cycles(Fn fn, int iterations = 1000, int warmup = 100) {
+double measure_ns(Fn fn, int iterations = 1000, int warmup = 100) {
     for (int i = 0; i < warmup; i++) fn();
 
     std::vector<double> samples;
@@ -124,17 +124,28 @@ double measure_cycles(Fn fn, int iterations = 1000, int warmup = 100) {
         uint64_t c0 = rdcycle();
         fn();
         uint64_t c1 = rdcycle();
-        samples.push_back((double)(c1 - c0));
+        // Convert ticks to nanoseconds: ticks * 1e9 / freq
+        samples.push_back((double)(c1 - c0) * 1e9 / freq);
     }
 
     auto stats = compute_stats(samples);
     return stats.median;
 }
 
-// Measure cycles per operation when fn performs `ops_per_call` operations
+// Measure nanoseconds per operation when fn performs `ops_per_call` operations
+template <typename Fn>
+double measure_ns_per_op(Fn fn, int ops_per_call, int iterations = 1000, int warmup = 100) {
+    return measure_ns(fn, iterations, warmup) / ops_per_call;
+}
+
+// Legacy aliases
+template <typename Fn>
+double measure_cycles(Fn fn, int iterations = 1000, int warmup = 100) {
+    return measure_ns(fn, iterations, warmup);
+}
 template <typename Fn>
 double measure_cycles_per_op(Fn fn, int ops_per_call, int iterations = 1000, int warmup = 100) {
-    return measure_cycles(fn, iterations, warmup) / ops_per_call;
+    return measure_ns_per_op(fn, ops_per_call, iterations, warmup);
 }
 
 // Prevent compiler from optimizing away a value
