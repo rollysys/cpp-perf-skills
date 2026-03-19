@@ -26,6 +26,24 @@ containers:
         platforms: [arm, x86]
   std::vector:
     note: "Usually optimal; consider folly::small_vector for small-size-optimized cases"
+  std::unordered_set:
+    alternatives:
+      - name: absl::flat_hash_set
+        header: "absl/container/flat_hash_set.h"
+        lib: abseil-cpp
+        advantage: "Same benefits as flat_hash_map for set operations"
+        integration: drop-in
+        platforms: [arm, x86]
+      - name: tsl::robin_set
+        header: "tsl/robin_set.h"
+        lib: tessil-robin-map
+        advantage: "Robin hood hashing, very cache-friendly"
+        integration: drop-in
+        platforms: [arm, x86]
+  std::list:
+    note: "Almost always wrong choice. Replace with std::vector (cache-friendly) or std::deque (stable iterators)"
+  std::deque:
+    note: "Consider plf::colony for high-insert/erase workloads, or boost::container::deque for better chunk sizing"
 
 algorithms:
   std::sort:
@@ -38,6 +56,20 @@ algorithms:
         platforms: [arm, x86]
   std::find:
     note: "For large collections, suggest container change rather than algorithm change"
+  std::sort (large arrays):
+    alternatives:
+      - name: ska_sort (radix sort)
+        header: "ska_sort.hpp"
+        lib: header-only
+        advantage: "O(n) radix sort for integer/float keys, 2-5x faster than std::sort for large arrays"
+        integration: minor-api-change
+        platforms: [arm, x86]
+      - name: x86-simd-sort
+        header: "x86-simd-sort.hpp"
+        lib: intel/x86-simd-sort
+        advantage: "AVX-512/AVX2 vectorized sort, 3-10x for large numeric arrays"
+        integration: minor-api-change
+        platforms: [x86]
 
 strings:
   std::string:
@@ -69,6 +101,14 @@ memory:
         advantage: "Compact, fast, good for ARM"
         integration: drop-in
         platforms: [arm, x86]
+  memory pool:
+    alternatives:
+      - name: Boost.Pool
+        header: "boost/pool/pool.hpp"
+        lib: boost
+        advantage: "Fixed-size allocation pool, eliminates fragmentation for same-size objects"
+        integration: minor-api-change
+        platforms: [arm, x86]
 
 math:
   standard math.h:
@@ -83,5 +123,75 @@ math:
         header: "sleef.h"
         lib: sleef
         advantage: "Vectorized math functions (sin/cos/exp), NEON-optimized"
+        integration: minor-api-change
+        platforms: [arm, x86]
+
+simd:
+  manual SIMD code:
+    alternatives:
+      - name: Highway
+        header: "hwy/highway.h"
+        lib: google/highway
+        advantage: "Portable SIMD: single source targets NEON, SVE, SSE, AVX, WASM"
+        integration: major-refactor
+        platforms: [arm, x86]
+      - name: MIPP
+        header: "mipp.h"
+        lib: aff3ct/MIPP
+        advantage: "Lightweight SIMD wrapper, simpler API than Highway"
+        integration: minor-api-change
+        platforms: [arm, x86]
+      - name: xsimd
+        header: "xsimd/xsimd.hpp"
+        lib: xtensor-stack/xsimd
+        advantage: "Batch operations with automatic fallback, good for scientific code"
+        integration: minor-api-change
+        platforms: [arm, x86]
+
+json_parsing:
+  nlohmann::json / rapidjson:
+    alternatives:
+      - name: simdjson
+        header: "simdjson.h"
+        lib: simdjson
+        advantage: "SIMD-accelerated JSON parsing, 2-10x faster, parses at GB/s"
+        integration: minor-api-change
+        platforms: [arm, x86]
+
+string_ops:
+  std::string find/search:
+    alternatives:
+      - name: stringzilla
+        header: "stringzilla/stringzilla.h"
+        lib: ashvardanian/stringzilla
+        advantage: "SIMD-accelerated string search, sort, edit distance"
+        integration: minor-api-change
+        platforms: [arm, x86]
+  memcpy/memmove:
+    note: "Usually well-optimized by libc. On ARM, consider glibc 2.35+ or optimized-routines for best NEON/SVE memcpy"
+
+concurrency:
+  std::mutex:
+    alternatives:
+      - name: absl::Mutex
+        header: "absl/synchronization/mutex.h"
+        lib: abseil-cpp
+        advantage: "Adaptive spinning, better under contention than pthread_mutex"
+        integration: minor-api-change
+        platforms: [arm, x86]
+  std::shared_mutex:
+    alternatives:
+      - name: folly::SharedMutex
+        header: "folly/SharedMutex.h"
+        lib: folly
+        advantage: "Reader-optimized, near-zero overhead for uncontended reads"
+        integration: minor-api-change
+        platforms: [arm, x86]
+  thread pool:
+    alternatives:
+      - name: BS::thread_pool
+        header: "BS_thread_pool.hpp"
+        lib: header-only
+        advantage: "Lightweight, header-only, good task scheduling"
         integration: minor-api-change
         platforms: [arm, x86]
