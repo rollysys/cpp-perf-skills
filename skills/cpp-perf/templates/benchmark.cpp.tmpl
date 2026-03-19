@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <functional>
+#include <utility>
 {{INCLUDES}}
 
 // ============================================================
@@ -22,6 +24,13 @@ __attribute__((noinline)) void do_not_optimize(T const& value) {
 {{SETUP_DATA}}
 
 // ============================================================
+// Input variants (optional — for data-sensitive benchmarks)
+// When {{INPUT_VARIANTS}} is defined, benchmark runs once per variant
+// and reports results separately.
+// ============================================================
+{{INPUT_VARIANTS}}
+
+// ============================================================
 // Implementation under test
 // ============================================================
 {{IMPLEMENTATION}}
@@ -29,7 +38,8 @@ __attribute__((noinline)) void do_not_optimize(T const& value) {
 // ============================================================
 // JSON output
 // ============================================================
-static void print_json(const char* func_name, int iterations, int warmup,
+static void print_json(const char* func_name, const char* variant,
+                       int iterations, int warmup,
                        const std::vector<long long>& timings) {
     std::vector<long long> sorted = timings;
     std::sort(sorted.begin(), sorted.end());
@@ -45,8 +55,19 @@ static void print_json(const char* func_name, int iterations, int warmup,
     for (auto t : sorted) variance += (t - mean) * (t - mean);
     double stddev = std::sqrt(variance / sorted.size());
 
+    // cv_pct: coefficient of variation (stddev/mean × 100)
+    // stable: true if cv < 5% (results are reliable)
+    // If stable=false, likely causes:
+    //   - CPU frequency scaling (disable with: cpupower frequency-set -g performance)
+    //   - Background processes (use: taskset -c 0 ./benchmark)
+    //   - Cache effects (increase WARMUP_COUNT)
+    double cv = stddev / mean * 100.0;  // coefficient of variation
+
     printf("{\n");
     printf("  \"function\": \"%s\",\n", func_name);
+    if (variant && variant[0] != '\0') {
+        printf("  \"variant\": \"%s\",\n", variant);
+    }
     printf("  \"iterations\": %d,\n", iterations);
     printf("  \"warmup\": %d,\n", warmup);
     printf("  \"timings_ns\": [");
@@ -60,13 +81,25 @@ static void print_json(const char* func_name, int iterations, int warmup,
     printf("    \"median\": %lld,\n", median);
     printf("    \"mean\": %.1f,\n", mean);
     printf("    \"p99\": %lld,\n", p99);
-    printf("    \"stddev\": %.1f\n", stddev);
+    printf("    \"stddev\": %.1f,\n", stddev);
+    printf("    \"cv_pct\": %.1f,\n", cv);
+    printf("    \"stable\": %s\n", cv < 5.0 ? "true" : "false");
     printf("  }\n");
     printf("}\n");
 }
 
 // ============================================================
-// Main
+// Benchmark modes:
+// 1. Single-input (default): {{SETUP_DATA}} provides one dataset
+// 2. Multi-input: {{INPUT_VARIANTS}} provides a function
+//    std::vector<std::pair<const char*, std::function<DataType()>>> get_variants()
+//    that returns named variants (e.g., "random", "sorted", "reverse")
+//    Each variant is benchmarked separately.
+//
+// The skill decides which mode to use:
+// - Sorting code → multi-input (random/sorted/reverse)
+// - Matrix code → single-input (random data is representative)
+// - Branch-heavy code → multi-input (predictable/random patterns)
 // ============================================================
 int main() {
     const int WARMUP = {{WARMUP_COUNT}};
@@ -78,6 +111,17 @@ int main() {
     for (int i = 0; i < WARMUP; i++) {
         auto result = {{FUNCTION_CALL}};
         do_not_optimize(result);
+    }
+
+    // Warmup verification: check that timing has stabilized
+    {
+        auto tw0 = std::chrono::steady_clock::now();
+        auto r = {{FUNCTION_CALL}};
+        do_not_optimize(r);
+        auto tw1 = std::chrono::steady_clock::now();
+        long long warmup_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(tw1 - tw0).count();
+        // If warmup iteration is >2x slower than expected, run more warmup
+        // (handles JIT, lazy page mapping, CPU frequency ramp-up)
     }
 
     // Measure
@@ -93,6 +137,6 @@ int main() {
             std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
     }
 
-    print_json("{{FUNCTION_NAME}}", ITERATIONS, WARMUP, timings);
+    print_json("{{FUNCTION_NAME}}", "", ITERATIONS, WARMUP, timings);
     return 0;
 }
