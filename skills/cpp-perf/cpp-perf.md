@@ -50,21 +50,35 @@ Present a summary:
 
 Analyze the target code across four layers. Use the loaded platform profile to quantify estimates.
 
-**Step 1 — Identify relevant layers:**
+**Step 1 — Scan for optimization opportunities across all categories:**
 
-Scan the code and determine which layers apply:
-- **Algorithm**: loops with O(n^2)+ patterns, linear search in large collections, redundant sorting
-- **Language**: pass-by-value of large objects, missing `std::move`, `string` concatenation in loops, virtual calls in hot paths
-- **Microarchitecture**: inner loops (vectorization candidates), conditional branches in hot paths, data dependency chains, AoS patterns with partial field access
-- **System**: structs crossing cache lines, 2D array column-major access, potential false sharing in multithreaded code
+The knowledge base has 56 patterns in 7 categories. Scan the code for signals in each:
+
+| Category | What to look for |
+|----------|-----------------|
+| **compute/** (11 patterns) | Dependency chains, missing FMA (or FMA on critical path — trap!), expensive ops (div/sqrt) that could be deferred, subnormal FP values, loop unroll opportunities (formula: unroll = throughput × latency) |
+| **vectorization/** (8 patterns) | Scalar loops over arrays, auto-vectorization blockers (`__restrict__` missing, non-unit stride), NEON/SVE opportunities on ARM, tail handling patterns |
+| **memory/** (9 patterns) | AoS with partial field access, nested loops with bad access order (loop interchange), working set vs cache size, struct padding waste, power-of-2 matrix dimensions (cache aliasing), store forwarding violations |
+| **branching/** (5 patterns) | Data-dependent branches on random data, switch/if-else chains replaceable by LUT, virtual call dispatch in hot loops, missed CCMP fusion opportunities on ARM |
+| **code_layout/** (8 patterns) | Large code footprint (I-cache thrashing), hot/cold code mixed, missing PGO/LTO, function ordering opportunities |
+| **concurrency/** (5 patterns) | Lock contention, false/true sharing, poor scaling (Amdahl), thread affinity on big.LITTLE, cache coherence overhead |
+| **system/** (10 patterns) | Memory alignment issues, huge page opportunities, I/O patterns, page fault storms, TLB shootdowns, CPU frequency effects, missing compiler optimization reports |
 
 **Step 2 — Consult knowledge base** (budget: up to 20% context window):
 
 1. Use `Glob` to list all pattern files: `skills/cpp-perf/knowledge/patterns/**/*.md`
-2. **If no pattern files exist** (Plan 2 not yet implemented), skip this step and rely on LLM knowledge
-3. If pattern files exist, read the frontmatter of each (first 10 lines) to check `keywords` and `layers`
-4. If any keyword matches a code characteristic AND the pattern's `layers` overlap with the relevant analysis layers, read the full pattern file
-5. Use the pattern's Detection, Transformation, and Expected Impact sections to inform your analysis
+2. Read the frontmatter of each (first 10 lines) to check `keywords`
+3. Select patterns whose keywords match code characteristics — prioritize by relevance, read up to 10 most relevant pattern files
+4. Use the pattern's Detection, Transformation, and Expected Impact sections to inform your analysis
+5. Pay special attention to **Caveats** sections — several patterns (branch-to-cmov, FMA utilization) have documented cases where the "optimization" makes things WORSE
+
+**Step 2b — Check experience patterns:**
+
+Always check these regardless of code type (they apply universally):
+- `system/measurement-methodology.md` — before generating any benchmark
+- `system/compiler-opt-reports.md` — after any compilation, check what the compiler did/didn't do
+- `compute/unroll-factor-formula.md` — when analyzing any hot loop with FMA/multiply-add
+- `compute/dual-issue-awareness.md` — when analyzing ARM code, check instruction pairing
 
 **Step 3 — Consult library registry:**
 
