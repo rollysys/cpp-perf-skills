@@ -127,3 +127,112 @@ N. [PN] <title> — <file>:<line>
 
 If user says 'stop' or indicates they only want the report, end here.
 Otherwise, record selected items and proceed to Stage 4.
+
+## Stage 4: Benchmark, Compile & Baseline Measurement
+
+For each selected issue, generate a benchmark, compile, analyze assembly, and run on the target.
+
+### 4a. Benchmark Generation
+
+1. Read the benchmark template: `skills/cpp-perf/templates/benchmark.cpp.tmpl`
+2. For each selected issue, fill in the template placeholders:
+
+| Placeholder | Fill with |
+|-------------|-----------|
+| `{{INCLUDES}}` | Required headers for the target code |
+| `{{SETUP_DATA}}` | `setup_data()` function that constructs test inputs |
+| `{{IMPLEMENTATION}}` | The target function (copied or wrapped) |
+| `{{FUNCTION_NAME}}` | Name of the function being benchmarked |
+| `{{ISSUE_ID}}` | Issue identifier (e.g., P1) |
+| `{{WARMUP_COUNT}}` | 1000 (default, adjust for very fast/slow functions) |
+| `{{ITERATION_COUNT}}` | 10000 (default, adjust for very fast/slow functions) |
+| `{{FUNCTION_CALL}}` | The actual call expression (e.g., `process(data)`) |
+| `{{RESET_DATA}}` | Empty if function is pure; `data = setup_data();` if function mutates input |
+
+3. **Construct test data** — follow this priority:
+
+| Parameter type | Strategy |
+|----------------|----------|
+| `int`, `float`, `double`, etc. | Random values within typical range + boundary values |
+| `std::vector<T>`, `std::array<T,N>` | Fill with random data, three sizes: small(16), medium(1024), large(65536) |
+| `std::string` | Typical strings for the domain (ask user if unclear) |
+| Custom struct/class | Read its definition, recursively construct each member |
+| Pointer/reference | Heap-allocate the pointed-to object |
+| Cannot determine | Ask the user with a specific question about typical values and sizes |
+
+4. Write the filled benchmark to a temporary file (e.g., `/tmp/cpp-perf/benchmark_P1.cpp`)
+5. Show the generated benchmark to the user and ask for confirmation before compiling
+
+### 4b. Cross-Compilation
+
+Read platform config from `cpp-perf-platform.yaml`:
+
+```bash
+<compiler> <compiler_flags> benchmark_P1.cpp -o benchmark_P1 -lm
+```
+
+If compilation fails:
+1. Show the error
+2. Attempt to fix (missing includes, type mismatches)
+3. If unfixable, ask the user for help
+
+If the compiler is GCC, add `-fopt-info-vec-missed` to get vectorization report.
+If Clang, add `-Rpass-missed=loop-vectorize`.
+
+### 4c. Disassembly Analysis
+
+Derive the objdump command from the compiler path:
+- `aarch64-linux-gnu-g++` → `aarch64-linux-gnu-objdump`
+- `x86_64-linux-gnu-g++` → `x86_64-linux-gnu-objdump`
+- General rule: replace `g++` or `gcc` with `objdump` in the compiler path
+
+```bash
+<objdump> -d benchmark_P1 | # extract target function section
+```
+
+Analyze the disassembly for:
+
+| Check | Look for | Good sign | Bad sign |
+|-------|----------|-----------|----------|
+| Vectorization | NEON: `ld1`,`st1`,`fmul` / AVX: `vmulps`,`vaddps` | Vector instructions in inner loop | Only scalar instructions |
+| Loop unrolling | Multiple copies of loop body | 2-8x unrolled | No unrolling on hot loop |
+| Instruction selection | `fmla`/`vfmadd` (fused multiply-add) | FMA used | Separate mul + add |
+| Register pressure | `str`/`ldr` to stack (`[sp, #offset]`) | Few stack spills | Many spills = too many live values |
+| Memory pattern | Sequential `ldr` with incrementing offsets | Stride-1 access | Scattered offsets |
+
+Present the disassembly findings. If the disassembly **contradicts** the static analysis (e.g., compiler already vectorized), **retract that issue** and inform the user.
+
+### 4d. Remote Execution
+
+Read SSH config from `cpp-perf-platform.yaml`. Build the SSH command:
+
+```bash
+# Upload
+scp -P <port> [-i <key>] [-J <proxy>] benchmark_P1 <user>@<host>:<work_dir>/
+
+# Execute
+ssh -p <port> [-i <key>] [-J <proxy>] <user>@<host> "<work_dir>/benchmark_P1"
+```
+
+On first SSH command in this session, show the command to the user and ask for confirmation.
+
+Parse the JSON output from stdout.
+
+**Error handling:**
+- SSH fails → show error, suggest `ssh -p <port> <user>@<host>` for manual test
+- Binary crashes → show stderr, likely test data issue, ask user
+- High stddev (>10%) → auto re-run with 2x iterations
+
+### 4e. Baseline Data Analysis
+
+Present results:
+
+> **Baseline Measurement — [P1] <title>**
+> - median: Xns, p99: Yns, stddev: Zns (W% of median)
+> - Static analysis estimated: ~Ans → actual: Bns
+> - [Match/Deviation explanation if >2x difference]
+
+If results deviate significantly from static estimates, explain possible causes:
+- Compiler already partially optimized
+- Cache effects not accounted for
+- Data-dependent behavior
