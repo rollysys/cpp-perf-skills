@@ -1,0 +1,45 @@
+// cpp-perf correctness verification
+// Verifies optimized output matches baseline for {{ISSUE_ID}}
+#include <cstdio>
+#include <cmath>
+#include <cstring>
+{{INCLUDES}}
+
+{{SETUP_DATA}}
+
+{{BASELINE_IMPLEMENTATION}}
+
+{{OPTIMIZED_IMPLEMENTATION}}
+
+// ============================================================
+// Comparison
+// ============================================================
+template <typename T>
+bool compare(const T& a, const T& b) {
+    return a == b;
+}
+
+// Float comparison with relative epsilon and absolute floor
+// The fmax(relative, absolute) ensures near-zero values still compare correctly.
+bool compare(float a, float b) {
+    if (a == b) return true;
+    float diff = std::fabs(a - b);
+    float largest = std::fmax(std::fabs(a), std::fabs(b));
+    return diff <= std::fmax(largest * {{EPSILON}}, (float){{EPSILON}});
+}
+
+bool compare(double a, double b) {
+    if (a == b) return true;
+    double diff = std::fabs(a - b);
+    double largest = std::fmax(std::fabs(a), std::fabs(b));
+    return diff <= std::fmax(largest * {{EPSILON}}, (double){{EPSILON}});
+}
+
+int main() {
+    auto data = setup_data();
+
+    {{CORRECTNESS_CHECK}}
+
+    printf("{\"correctness\": \"PASSED\", \"samples\": %d}\n", {{SAMPLE_COUNT}});
+    return 0;
+}

@@ -1,0 +1,86 @@
+name: Skylake
+arch: x86_64
+vendor: Intel
+
+pipeline:
+  issue_width: 4
+  dispatch_width: 6
+  reorder_buffer: 224
+  functional_units:
+    alu: 4
+    fp: 2
+    load: 2
+    store: 1
+    branch: 2
+
+registers:
+  gpr: 16
+  ymm: 16
+  zmm: 0
+
+cache:
+  l1d: { size_kb: 32, line_bytes: 64, associativity: 8, latency: 4 }
+  l1i: { size_kb: 32, line_bytes: 64, associativity: 8 }
+  l2:  { size_kb: 256, line_bytes: 64, associativity: 4, latency: 12 }
+  l3:  { size_kb: 8192, line_bytes: 64, associativity: 16, latency: 36 }
+
+instructions:
+  integer:
+    add: { lat: 1, tp: 0.25 }
+    imul: { lat: 3, tp: 1 }
+    idiv: { lat: 26, tp: 10 }
+  fp:
+    addss: { lat: 4, tp: 0.5 }
+    mulss: { lat: 4, tp: 0.5 }
+    divss: { lat: 11, tp: 3 }
+  avx2:
+    vmovups: { lat: 5, tp: 0.5 }
+    vmovaps_store: { lat: 1, tp: 0.5 }
+    vmulps: { lat: 4, tp: 0.5 }
+    vfmadd: { lat: 4, tp: 0.5 }
+  memory:
+    load: { lat: 4, tp: 0.5 }
+    store: { lat: 1, tp: 0.5 }
+    prefetch: { lat: 0, tp: 0.25 }
+
+branch:
+  mispredict_penalty: 16
+  predictor_type: TAGE
+
+memory_system:
+  load_queue_depth: 72
+  store_queue_depth: 56
+  tlb_miss_penalty: 40
+  page_sizes_kb: [4, 2048]
+
+os_overhead:
+  syscall: 300
+  thread_create: 10000
+  fork: 35000
+  cpu_migration: 3000
+  mutex_lock_unlock: 20
+  spinlock: 10
+  rwlock_read: 15
+  rwlock_write: 20
+  futex: 80
+  atomic_seq_cst: 25
+  atomic_acq_rel: 12
+  atomic_relaxed: 1
+  malloc_16b: 40
+  malloc_256b: 45
+  malloc_4kb: 65
+  malloc_1mb: 1500
+  mmap_anon: 2500
+  minor_page_fault: 600
+  major_page_fault: 40000
+  huge_page_alloc: 1000
+  file_open_close: 2500
+  read_4kb: 1200
+  write_4kb: 1500
+  fsync: 40000
+  pipe_roundtrip: 4000
+  eventfd_roundtrip: 2500
+  signal_delivery: 3000
+  sched_yield: 1500
+  timer_resolution_ns: 30
+  context_switch: 2000

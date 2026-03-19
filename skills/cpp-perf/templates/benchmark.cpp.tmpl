@@ -1,0 +1,151 @@
+// cpp-perf auto-generated benchmark
+// Target: {{FUNCTION_NAME}} — {{ISSUE_ID}}
+#include <chrono>
+#include <vector>
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <functional>
+#include <utility>
+{{INCLUDES}}
+
+// ============================================================
+// Prevent compiler from optimizing away the result
+// ============================================================
+template <typename T>
+__attribute__((noinline)) void do_not_optimize(T const& value) {
+    asm volatile("" : : "r,m"(value) : "memory");
+}
+
+// Prevent reordering (use with void-returning functions)
+inline void clobber() {
+    asm volatile("" ::: "memory");
+}
+
+// ============================================================
+// Test data setup
+// ============================================================
+{{SETUP_DATA}}
+
+// ============================================================
+// Input variants (optional — for data-sensitive benchmarks)
+// When {{INPUT_VARIANTS}} is defined, benchmark runs once per variant
+// and reports results separately.
+// ============================================================
+{{INPUT_VARIANTS}}
+
+// ============================================================
+// Implementation under test
+// ============================================================
+{{IMPLEMENTATION}}
+
+// ============================================================
+// JSON output
+// ============================================================
+static void print_json(const char* func_name, const char* variant,
+                       int iterations, int warmup,
+                       const std::vector<long long>& timings) {
+    std::vector<long long> sorted = timings;
+    std::sort(sorted.begin(), sorted.end());
+
+    long long min_val = sorted.front();
+    long long median = sorted[sorted.size() / 2];
+    double mean = 0;
+    for (auto t : sorted) mean += t;
+    mean /= sorted.size();
+    long long p99 = sorted[(size_t)(sorted.size() * 0.99)];
+
+    double variance = 0;
+    for (auto t : sorted) variance += (t - mean) * (t - mean);
+    double stddev = std::sqrt(variance / sorted.size());
+
+    // cv_pct: coefficient of variation (stddev/mean × 100)
+    // stable: true if cv < 5% (results are reliable)
+    // If stable=false, likely causes:
+    //   - CPU frequency scaling (disable with: cpupower frequency-set -g performance)
+    //   - Background processes (use: taskset -c 0 ./benchmark)
+    //   - Cache effects (increase WARMUP_COUNT)
+    double cv = stddev / mean * 100.0;  // coefficient of variation
+
+    printf("{\n");
+    printf("  \"function\": \"%s\",\n", func_name);
+    if (variant && variant[0] != '\0') {
+        printf("  \"variant\": \"%s\",\n", variant);
+    }
+    printf("  \"iterations\": %d,\n", iterations);
+    printf("  \"warmup\": %d,\n", warmup);
+    printf("  \"timings_ns\": [");
+    for (size_t i = 0; i < timings.size(); i++) {
+        if (i > 0) printf(",");
+        printf("%lld", timings[i]);
+    }
+    printf("],\n");
+    printf("  \"stats\": {\n");
+    printf("    \"min\": %lld,\n", min_val);
+    printf("    \"median\": %lld,\n", median);
+    printf("    \"mean\": %.1f,\n", mean);
+    printf("    \"p99\": %lld,\n", p99);
+    printf("    \"stddev\": %.1f,\n", stddev);
+    printf("    \"cv_pct\": %.1f,\n", cv);
+    printf("    \"stable\": %s\n", cv < 5.0 ? "true" : "false");
+    printf("  }\n");
+    printf("}\n");
+}
+
+// ============================================================
+// Benchmark modes:
+// 1. Single-input (default): {{SETUP_DATA}} provides one dataset
+// 2. Multi-input: {{INPUT_VARIANTS}} provides a function
+//    std::vector<std::pair<const char*, std::function<DataType()>>> get_variants()
+//    that returns named variants (e.g., "random", "sorted", "reverse")
+//    Each variant is benchmarked separately.
+//
+// The skill decides which mode to use:
+// - Sorting code → multi-input (random/sorted/reverse)
+// - Matrix code → single-input (random data is representative)
+// - Branch-heavy code → multi-input (predictable/random patterns)
+// ============================================================
+int main() {
+    const int WARMUP = {{WARMUP_COUNT}};
+    const int ITERATIONS = {{ITERATION_COUNT}};
+
+    auto data = setup_data();
+
+    // Warmup
+    // NOTE: If {{FUNCTION_CALL}} returns void, replace:
+    //   auto result = {{FUNCTION_CALL}}; do_not_optimize(result);
+    // with:
+    //   {{FUNCTION_CALL}}; clobber();
+    for (int i = 0; i < WARMUP; i++) {
+        auto result = {{FUNCTION_CALL}};
+        do_not_optimize(result);
+    }
+
+    // Warmup verification: check that timing has stabilized
+    {
+        auto tw0 = std::chrono::steady_clock::now();
+        auto r = {{FUNCTION_CALL}};
+        do_not_optimize(r);
+        auto tw1 = std::chrono::steady_clock::now();
+        long long warmup_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(tw1 - tw0).count();
+        // If warmup iteration is >2x slower than expected, run more warmup
+        // (handles JIT, lazy page mapping, CPU frequency ramp-up)
+    }
+
+    // Measure
+    std::vector<long long> timings;
+    timings.reserve(ITERATIONS);
+    for (int i = 0; i < ITERATIONS; i++) {
+        {{RESET_DATA}}
+        auto t0 = std::chrono::steady_clock::now();
+        auto result = {{FUNCTION_CALL}};
+        do_not_optimize(result);
+        auto t1 = std::chrono::steady_clock::now();
+        timings.push_back(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    }
+
+    print_json("{{FUNCTION_NAME}}", "", ITERATIONS, WARMUP, timings);
+    return 0;
+}

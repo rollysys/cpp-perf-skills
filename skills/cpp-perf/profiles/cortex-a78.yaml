@@ -1,0 +1,453 @@
+# Cortex-A78 microarchitecture profile
+# Source: Arm Cortex-A78 Core Software Optimization Guide (PJDOC-466751330-9691, Issue 4.0)
+#         Arm Cortex-A78 Core Technical Reference Manual (101430_0102_09_en, Issue 09)
+# All latency (lat) values in cycles; throughput (tp) in instructions/cycle (reciprocal throughput).
+# Where the doc says "Execution Throughput = N", tp = 1/N (cycles per instruction).
+
+name: Cortex-A78
+arch: aarch64
+vendor: ARM
+revision: r1p2
+
+pipeline:
+  # SWOG 4.1: "dispatch stage can process up to 6 MOPs per cycle and dispatch up to 12 uOPs per cycle"
+  decode_width: 4               # 4 instructions decoded per cycle (front-end)
+  mop_dispatch_width: 6         # up to 6 MOPs dispatched per cycle
+  uop_dispatch_width: 12        # up to 12 uOPs dispatched per cycle
+  issue_pipelines: 13           # SWOG 2.1: 13 issue pipelines, each accepts 1 uOP/cycle
+  # ROB/reorder buffer size: not disclosed in public docs; ~160 is widely cited from
+  # reverse-engineering (e.g., Chips and Cheese). Retained as best-known estimate.
+  reorder_buffer: 160
+  # SWOG 2.1 pipeline diagram: in-order front-end -> out-of-order back-end
+  functional_units:
+    branch: 2          # Branch 0/1
+    int_single: 2      # Integer Single-Cycle 0/1 (symbol S) -- simple ALU only
+    int_multi: 2       # Integer Single/Multi-Cycle 0/1 (symbol M) -- shift-ALU, multiply, divide, CRC
+    fp_asimd: 2        # FP/ASIMD 0/1 (symbol V)
+    load: 3            # Load/Store 0/1 (address gen) + Load 2
+    store_addr: 2      # Load/Store 0/1 also handle store address
+    store_data: 2      # Store data 0/1
+  # Dispatch constraints (SWOG 4.1):
+  dispatch_limits:
+    s_or_b: 4          # up to 4 uOPs on S or B pipelines
+    m: 4               # up to 4 uOPs on M pipelines
+    m0: 2              # up to 2 uOPs on M0 pipeline
+    v0: 2              # up to 2 uOPs on V0 pipeline
+    v1: 2              # up to 2 uOPs on V1 pipeline
+    l: 6               # up to 6 uOPs on L pipelines
+
+registers:
+  gpr: 31              # X0-X30 (architectural)
+  neon: 32             # V0-V31 (architectural)
+
+cache:
+  # TRM 2.6.1.1: VIPT, 4-way set-associative, 64-byte line, configurable 32KB or 64KB
+  l1i:
+    size_kb: [32, 64]  # configurable
+    line_bytes: 64
+    associativity: 4
+    replacement: pseudo-LRU
+  # TRM 2.6.1.2: VIPT (behaves PIPT), 4-way set-associative, 64-byte line, configurable 32KB or 64KB
+  # SWOG 3.9: "latencies assume the memory access hits in the Level 1 Data Cache"
+  #   Integer load latency = 4 cycles (Table 3-12)
+  #   FP/ASIMD load latency = 5 cycles (Table 3-20, +1 cycle forwarding to V pipes)
+  l1d:
+    size_kb: [32, 64]  # configurable
+    line_bytes: 64
+    associativity: 4
+    latency: 4         # integer load hit latency (cycles)
+    fp_load_latency: 5 # FP/ASIMD load hit latency (+1 cycle for forwarding to V pipes)
+    replacement: pseudo-LRU
+    read_ports: 3      # TRM: three 128-bit read paths from data L1 to datapath
+    write_bandwidth: 256  # TRM: 256-bit write path from datapath to L1
+  # TRM 2.2.1.7: 8-way set-associative, configurable 256KB or 512KB, ECC per 64 bits
+  l2:
+    size_kb: [256, 512]  # configurable
+    line_bytes: 64
+    associativity: 8
+    latency: 9           # typical L2 hit latency (not explicitly stated; retained from known measurements)
+    read_interface: 512  # TRM: 512-bit read interface from L2 to L1D
+    write_interface: 512 # TRM: 512-bit write interface from L2 to L1D
+  # L3 is in the DSU (DynamIQ Shared Unit), not in the core itself; values are DSU-dependent
+  l3:
+    size_kb: 4096        # typical DSU L3 config
+    line_bytes: 64
+    associativity: 16
+    latency: 30          # approximate; varies by DSU config
+  # TRM 2.6.1.1: 1.5K entry, 4-way skewed-associative L0 MOP cache
+  mop_cache:
+    entries: 1536
+    associativity: 4     # 4-way skewed-associative
+
+branch:
+  # TRM 2.6.3.1: BTB, direction predictor (branch history), return stack, static predictor, indirect predictor
+  predictor_type: hybrid   # BTB + direction predictor + indirect predictor + return stack
+  components:
+    - BTB                  # Branch Target Buffer
+    - direction_predictor  # branch history based
+    - return_stack         # for subroutine returns
+    - static_predictor
+    - indirect_predictor   # for indirect branches
+  # Misprediction penalty: derived from pipeline depth (front-end ~11 stages is widely cited)
+  # Not explicitly stated in SWOG/TRM but consistent with public benchmarks
+  mispredict_penalty: 11
+  # SWOG 4.9: avoid placing >4 branch instructions within aligned 32-byte region
+  max_branches_per_32b: 4
+  # SWOG 4.14: instruction fusion pairs
+  fusion_pairs:
+    - "CMP/CMN (imm/reg) + B.cond"
+    - "CMP (imm/reg) + CSEL"
+    - "CMP (imm/reg) + CSET"
+    - "TST (imm/reg) + B.cond"
+    - "BICS (reg) + B.cond"
+    - "NOP + any"
+    - "AESE + AESMC"
+    - "AESD + AESIMC"
+
+instructions:
+  # ===========================================================================
+  # Integer instructions (AArch64) -- SWOG Tables 3-2 through 3-11
+  # Pipeline symbols: B=Branch, S=Int-SingleCycle, I=S+M, M=Int-Single/Multi, M0=Multi0 only
+  # ===========================================================================
+  integer:
+    # -- Branch (Table 3-2) --
+    branch_imm:             { lat: 1, tp: 0.5,  pipe: B }           # B
+    branch_reg:             { lat: 1, tp: 0.5,  pipe: B }           # BR, RET
+    branch_link_imm:        { lat: 1, tp: 0.5,  pipe: "B, S" }     # BL
+    branch_link_reg:        { lat: 1, tp: 0.5,  pipe: "B, S" }     # BLR
+    compare_and_branch:     { lat: 1, tp: 0.5,  pipe: B }           # CBZ, CBNZ, TBZ, TBNZ
+
+    # -- Arithmetic/Logical (Table 3-4) --
+    add:                    { lat: 1, tp: 0.25, pipe: I }  # ADD, ADC, AND, BIC, EON, EOR, ORN, ORR, SUB, SBC
+    add_flagset:            { lat: 1, tp: 0.33, pipe: I }  # ADDS, ADCS, ANDS, BICS, SUBS, SBCS (tp=3)
+    add_extend_shift:       { lat: 2, tp: 0.5,  pipe: M }  # ADD{S}/SUB{S} with extend/shift
+    add_lsl_le4:            { lat: 1, tp: 0.25, pipe: I }  # ADD/SUB with LSL shift <= 4
+    add_lsl_le4_flagset:    { lat: 1, tp: 0.33, pipe: I }  # ADDS/SUBS with LSL shift <= 4 (tp=3)
+    add_shift_other:        { lat: 2, tp: 0.5,  pipe: M }  # ADD{S}/SUB{S} with LSR/ASR/ROR or LSL > 4
+    conditional_compare:    { lat: 1, tp: 0.33, pipe: I }  # CCMN, CCMP (tp=3)
+    conditional_select:     { lat: 1, tp: 0.25, pipe: I }  # CSEL, CSINC, CSINV, CSNEG
+    logical_shift:          { lat: 1, tp: 0.25, pipe: I }  # AND/BIC/EON/EOR/ORN/ORR shifted, no flag
+    logical_shift_flagset:  { lat: 2, tp: 0.5,  pipe: M }  # ANDS/BICS shifted
+
+    # -- Divide/Multiply (Table 3-7) --
+    div_w:                  { lat: "5-12", tp: "5-12",  pipe: M0, note: "data-dependent, iterative, blocks subsequent divides" }
+    div_x:                  { lat: "5-20", tp: "5-20",  pipe: M0, note: "data-dependent, iterative, blocks subsequent divides" }
+    mul:                    { lat: 2, tp: 0.5,  pipe: M }  # MUL, MNEG
+    madd_w:                 { lat: 2, tp: 1,    pipe: M0, note: "accumulate forwarding lat=1" }  # MADD, MSUB W-form
+    madd_x:                 { lat: 2, tp: 1,    pipe: M0, note: "accumulate forwarding lat=1" }  # MADD, MSUB X-form
+    madd_long:              { lat: 2, tp: 0.5,  pipe: M,  note: "accumulate forwarding lat=1" }  # SMADDL, SMSUBL, UMADDL, UMSUBL
+    mul_high:               { lat: 3, tp: 0.5,  pipe: M }  # SMULH, UMULH
+    mul_long:               { lat: 2, tp: 0.5,  pipe: M }  # SMULL, UMULL, SMNEGL, UMNEGL
+
+    # -- Miscellaneous data-processing (Table 3-10) --
+    adr:                    { lat: 1, tp: 0.25, pipe: I }  # ADR, ADRP
+    extr_one_reg:           { lat: 1, tp: 0.25, pipe: I }  # EXTR (Rn==Rm or imm==0)
+    extr_two_reg:           { lat: 3, tp: 0.5,  pipe: "I, M" }  # EXTR (two regs)
+    bitfield_move:          { lat: 1, tp: 0.25, pipe: I }  # SBFM, UBFM
+    bitfield_insert:        { lat: 2, tp: 0.5,  pipe: M }  # BFM
+    clz_cls:                { lat: 1, tp: 0.25, pipe: I }  # CLS, CLZ
+    mov_imm:                { lat: 1, tp: 0.25, pipe: I }  # MOVN, MOVK, MOVZ
+    rev:                    { lat: 1, tp: 0.25, pipe: I }  # RBIT, REV, REV16, REV32
+    variable_shift:         { lat: 1, tp: 0.25, pipe: I }  # ASRV, LSLV, LSRV, RORV
+
+    # -- CRC (Table 3-36) --
+    crc32:                  { lat: 2, tp: 1,    pipe: M0, note: "late-forwarding reduces consumer lat by 1" }
+
+    # -- Zero-latency MOVs (SWOG 4.15) --
+    mov_zero:               { lat: 0, tp: 0,    note: "MOV Xd,#0 / MOV Xd,XZR -- eliminated at rename" }
+    mov_reg:                { lat: 0, tp: 0,    note: "MOV Xd,Xn -- eliminated at rename (may not always apply)" }
+
+  # ===========================================================================
+  # Load instructions (AArch64) -- SWOG Tables 3-12, 3-13
+  # Latencies assume L1D cache hit
+  # ===========================================================================
+  memory:
+    # -- Integer loads (Table 3-12) --
+    load_literal:           { lat: 4, tp: 0.33, pipe: L }           # LDR/LDRSW/PRFM literal
+    load_unscaled:          { lat: 4, tp: 0.33, pipe: L }           # LDUR and variants
+    load_imm:               { lat: 4, tp: 0.33, pipe: L }           # LDR unsigned/signed imm
+    load_post_pre_index:    { lat: 4, tp: 0.33, pipe: "L, I" }     # LDR post/pre-index
+    load_reg_basic:         { lat: 4, tp: 0.33, pipe: L }           # LDR register offset basic
+    load_reg_scale_4_8:     { lat: 4, tp: 0.33, pipe: L }           # LDR register offset scale by 4/8
+    load_reg_scale_2:       { lat: 5, tp: 0.33, pipe: "I, L" }     # LDRH/LDRSH register offset scale by 2
+    load_reg_extend:        { lat: 4, tp: 0.33, pipe: L }           # LDR register offset extend
+    load_pair_w:            { lat: 4, tp: 0.33, pipe: L }           # LDP W-form
+    load_pair_x:            { lat: 4, tp: 0.67, pipe: L }           # LDP X-form (tp=3/2)
+
+    # -- Integer stores (Table 3-14) --
+    store_imm:              { lat: 1, tp: 0.5, pipe: "L01, D" }    # STR/STUR/STRB/STRH imm
+    store_post_pre_index:   { lat: 1, tp: 0.5, pipe: "L01, D, I" } # STR post/pre-index
+    store_reg_basic:        { lat: 1, tp: 0.5, pipe: "L01, D" }    # STR register offset
+    store_pair:             { lat: 1, tp: 0.5, pipe: "L01, D" }    # STP/STNP
+    store_pair_post_pre:    { lat: 1, tp: 0.5, pipe: "L01, D, I" } # STP post/pre-index
+
+    prefetch:               { lat: 4, tp: 0.33, pipe: L }           # PRFM
+
+    # -- FP/Vector loads (Table 3-20) -- (+1 cycle vs integer for V-pipe forwarding)
+    fp_load:                { lat: 5, tp: 0.33, pipe: L }           # LDR S/D/Q literal/imm
+    fp_load_pair_sd:        { lat: 5, tp: 0.33, pipe: L }           # LDP S/D-form
+    fp_load_pair_q:         { lat: 5, tp: 0.67, pipe: L }           # LDP Q-form (tp=3/2)
+
+    # -- FP/Vector stores (Table 3-22) --
+    fp_store:               { lat: 2, tp: 0.5, pipe: "L01, V" }    # STR vector
+    fp_store_pair:          { lat: 2, tp: 0.5, pipe: "L01, V" }    # STP vector S/D-form
+    fp_store_pair_q_post:   { lat: 2, tp: 1,   pipe: "I, L01, V" } # STP Q-form post/pre-index (tp=1)
+
+  # ===========================================================================
+  # FP scalar instructions (AArch64) -- SWOG Tables 3-16, 3-18
+  # ===========================================================================
+  fp:
+    fabs:                   { lat: 2, tp: 0.5,  pipe: V }
+    fadd:                   { lat: 2, tp: 0.5,  pipe: V }           # FADD, FSUB
+    fcompare:               { lat: 2, tp: 1,    pipe: V0 }          # FCCMP, FCMP
+    fdiv_h:                 { lat: 7, tp: 1.75, pipe: V0, note: "iterative, blocks V0" }
+    fdiv_s:                 { lat: "7-10", tp: "2.25-1.75", pipe: V0, note: "iterative, blocks V0" }
+    fdiv_d:                 { lat: "7-15", tp: "7-3.5", pipe: V0, note: "iterative, blocks V0" }
+    fmin_fmax:              { lat: 2, tp: 0.5,  pipe: V }           # FMIN, FMAX, FMINNM, FMAXNM
+    fmul:                   { lat: 3, tp: 0.5,  pipe: V, note: "can late-forward to FMLA accumulate" }
+    fmadd:                  { lat: 4, tp: 0.5,  pipe: V, note: "accumulate forwarding lat=2" }  # FMADD, FMSUB, FNMADD, FNMSUB
+    fneg:                   { lat: 2, tp: 0.5,  pipe: V }
+    frint:                  { lat: 2, tp: 1,    pipe: V0 }          # FRINTA..FRINTZ
+    fcsel:                  { lat: 2, tp: 0.5,  pipe: V }
+    fsqrt_h:                { lat: 7, tp: 1.75, pipe: V0, note: "iterative, blocks V0" }
+    fsqrt_s:                { lat: "7-9", tp: "2-1.75", pipe: V0 }
+    fsqrt_d:                { lat: "7-16", tp: "7.5-3.5", pipe: V0 }
+    # FP misc (Table 3-18)
+    fcvt_vec_to_vec:        { lat: 2, tp: 1,    pipe: V0 }          # FCVT, FCVTXN
+    fcvt_gen_to_vec:        { lat: 3, tp: 1,    pipe: M0 }          # SCVTF, UCVTF from GPR
+    fcvt_vec_to_gen:        { lat: 3, tp: 1,    pipe: V0 }          # FCVTAS/FCVTAU/... to GPR
+    fmov_imm:               { lat: 2, tp: 0.5,  pipe: V }
+    fmov_reg:               { lat: 2, tp: 0.5,  pipe: V }
+    fmov_gen_to_vec_lo:     { lat: 3, tp: 1,    pipe: M0 }          # FMOV GPR -> low half of VR
+    fmov_gen_to_vec_hi:     { lat: 5, tp: 1,    pipe: "M0, V" }     # FMOV GPR -> high half of VR
+    fmov_vec_to_gen:        { lat: 2, tp: 1,    pipe: V1 }          # FMOV VR -> GPR
+
+  # ===========================================================================
+  # ASIMD/NEON integer instructions (AArch64) -- SWOG Tables 3-24, 3-25
+  # ===========================================================================
+  neon_integer:
+    asimd_abd:              { lat: 2, tp: 0.5,  pipe: V }           # SABD, UABD
+    asimd_aba:              { lat: 3, tp: 1,    pipe: V1, note: "accum fwd lat=1" }  # SABA, UABA
+    asimd_arith_basic:      { lat: 2, tp: 0.5,  pipe: V }           # ADD, SUB, ABS, NEG, SADDL, ...
+    asimd_arith_complex:    { lat: 2, tp: 0.5,  pipe: V }           # ADDHN, SQABS, SQADD, ...
+    asimd_arith_pairwise:   { lat: 2, tp: 0.5,  pipe: V }           # ADDP, SADDLP, UADDLP
+    asimd_reduce_4h4s:      { lat: 2, tp: 1,    pipe: V1 }          # ADDV 4H/4S
+    asimd_reduce_8b8h:      { lat: 4, tp: 1,    pipe: "V1, V" }     # ADDV 8B/8H
+    asimd_reduce_16b:       { lat: 4, tp: 2,    pipe: V1 }          # ADDV 16B
+    asimd_compare:          { lat: 2, tp: 0.5,  pipe: V }           # CMEQ, CMGE, CMGT, ...
+    asimd_dot_product:      { lat: 2, tp: 0.5,  pipe: V, note: "accum fwd lat=1" }  # SDOT, UDOT
+    asimd_logical:          { lat: 2, tp: 0.5,  pipe: V }           # AND, BIC, EOR, MOV, MVN, ORN, ORR
+    asimd_maxmin:           { lat: 2, tp: 0.5,  pipe: V }           # SMAX, SMIN, UMAX, UMIN, pairwise
+    asimd_mul:              { lat: 4, tp: 1,    pipe: V0 }          # MUL, SQDMULH, SQRDMULH
+    asimd_mla:              { lat: 4, tp: 1,    pipe: V0, note: "accum fwd lat=1" }  # MLA, MLS
+    asimd_mla_long:         { lat: 4, tp: 1,    pipe: V0, note: "accum fwd lat=1" }  # SMLAL, UMLAL, ...
+    asimd_mul_long:         { lat: 3, tp: 1,    pipe: V0 }          # SMULL, UMULL, SQDMULL
+    asimd_pmul_d:           { lat: 3, tp: 1,    pipe: V0 }          # PMUL/PMULL D-form (8x8)
+    asimd_pmul_q:           { lat: 3, tp: 1,    pipe: V0 }          # PMUL/PMULL Q-form (8x8)
+    asimd_shift_imm_basic:  { lat: 2, tp: 1,    pipe: V1 }          # SHL, SHRN, SSHR, USHR, ...
+    asimd_shift_imm_insert: { lat: 2, tp: 1,    pipe: V1 }          # SLI, SRI
+    asimd_shift_imm_complex: { lat: 4, tp: 1,   pipe: V1 }          # SQRSHRN, SQSHL, UQSHL, ...
+    asimd_shift_reg_basic:  { lat: 2, tp: 1,    pipe: V1 }          # SSHL, USHL
+    asimd_shift_reg_complex: { lat: 4, tp: 1,   pipe: V1 }          # SRSHL, SQRSHL, ...
+    asimd_shift_accumulate: { lat: 4, tp: 1,    pipe: V1, note: "accum fwd lat=1" }  # SSRA, USRA, ...
+
+  # ===========================================================================
+  # ASIMD/NEON floating-point instructions (AArch64) -- SWOG Tables 3-26, 3-27
+  # ===========================================================================
+  neon_fp:
+    asimd_fp_abs:           { lat: 2, tp: 0.5,  pipe: V }           # FABS, FABD
+    asimd_fp_arith:         { lat: 2, tp: 0.5,  pipe: V }           # FADD, FSUB, FADDP
+    asimd_fp_compare:       { lat: 2, tp: 0.5,  pipe: V }           # FACGE, FCMEQ, FCMGE, ...
+    asimd_fp_mul:           { lat: 3, tp: 0.5,  pipe: V, note: "can late-forward to FMLA" }
+    asimd_fp_fmla:          { lat: 4, tp: 0.5,  pipe: V, note: "accum fwd lat=2" }  # FMLA, FMLS
+    asimd_fp_neg:           { lat: 2, tp: 0.5,  pipe: V }           # FNEG
+    asimd_fp_maxmin:        { lat: 2, tp: 0.5,  pipe: V }           # FMAX, FMIN, FMAXNM, ...
+    asimd_fp_div_d_f16:     { lat: 7, tp: 7,    pipe: V0, note: "iterative" }
+    asimd_fp_div_d_f32:     { lat: "7-10", tp: "4.5-3.5", pipe: V0 }
+    asimd_fp_div_q_f16:     { lat: "10-13", tp: "13-10", pipe: V0 }
+    asimd_fp_div_q_f32:     { lat: "7-10", tp: "9-7", pipe: V0 }
+    asimd_fp_div_q_f64:     { lat: "7-15", tp: "14-7", pipe: V0 }
+    asimd_fp_sqrt_d_f32:    { lat: "7-10", tp: "4.5-3.5", pipe: V0 }
+    asimd_fp_sqrt_q_f32:    { lat: "7-10", tp: "9-7", pipe: V0 }
+    asimd_fp_sqrt_q_f64:    { lat: "7-16", tp: "15-7", pipe: V0 }
+    asimd_fp_cvt_narrow_f32_to_f16: { lat: 4, tp: 2, pipe: V0 }
+    asimd_fp_cvt_long_f16_to_f32:   { lat: 4, tp: 2, pipe: V0 }
+    asimd_fp_cvt_other_d_f32:       { lat: 3, tp: 1, pipe: V0 }
+    asimd_fp_round_d_f32:   { lat: 3, tp: 1,    pipe: V0 }
+    asimd_fp_round_q_f32:   { lat: 4, tp: 2,    pipe: V0 }
+    asimd_fp_reciprocal_step: { lat: 4, tp: 0.5, pipe: V }          # FRECPS, FRSQRTS
+
+  # ===========================================================================
+  # ASIMD miscellaneous (AArch64) -- SWOG Tables 3-28, 3-29
+  # ===========================================================================
+  neon_misc:
+    asimd_bit_reverse:      { lat: 2, tp: 0.5,  pipe: V }           # RBIT
+    asimd_bitwise_insert:   { lat: 2, tp: 0.5,  pipe: V }           # BIF, BIT, BSL
+    asimd_count:            { lat: 2, tp: 0.5,  pipe: V }           # CLS, CLZ, CNT
+    asimd_dup_gen:          { lat: 3, tp: 1,    pipe: M0 }          # DUP from GPR
+    asimd_dup_element:      { lat: 2, tp: 0.5,  pipe: V }           # DUP from element
+    asimd_extract:          { lat: 2, tp: 0.5,  pipe: V }           # EXT
+    asimd_ins_element:      { lat: 2, tp: 0.5,  pipe: V }           # INS element-to-element
+    asimd_ins_gen_to_elem:  { lat: 5, tp: 1,    pipe: "M0, V" }     # INS GPR -> element
+    asimd_umov:             { lat: 2, tp: 1,    pipe: V1 }          # UMOV, SMOV
+    asimd_tbl_1_2:          { lat: 2, tp: 0.5,  pipe: V }           # TBL 1-2 table regs
+    asimd_tbl_3:            { lat: 4, tp: 1,    pipe: V }           # TBL 3 table regs
+    asimd_tbl_4:            { lat: 4, tp: 1.5,  pipe: V }           # TBL 4 table regs (tp=2/3)
+    asimd_transpose:        { lat: 2, tp: 0.5,  pipe: V }           # TRN1, TRN2
+    asimd_zip_unzip:        { lat: 2, tp: 0.5,  pipe: V }           # UZP1, UZP2, ZIP1, ZIP2
+    asimd_frecpe:           { lat: 3, tp: 1,    pipe: V0 }          # FRECPE, FRSQRTE (D-form F32)
+    asimd_frecpe_q_f32:     { lat: 4, tp: 2,    pipe: V0 }          # FRECPE, FRSQRTE (Q-form F32)
+
+  # ===========================================================================
+  # ASIMD load/store (AArch64) -- SWOG Tables 3-30 through 3-33
+  # ===========================================================================
+  neon_ldst:
+    ld1_1reg_d:             { lat: 5, tp: 0.33, pipe: L }           # LD1 {Vt.xB}, 1 reg D-form
+    ld1_1reg_q:             { lat: 5, tp: 0.33, pipe: L }           # LD1 {Vt.xB}, 1 reg Q-form
+    ld1_2reg_d:             { lat: 5, tp: 0.67, pipe: L }           # LD1 2 reg D-form (tp=3/2)
+    ld1_2reg_q:             { lat: 5, tp: 0.67, pipe: L }           # LD1 2 reg Q-form
+    ld1_3reg_d:             { lat: 5, tp: 1,    pipe: L }           # LD1 3 reg D-form
+    ld1_3reg_q:             { lat: 5, tp: 1,    pipe: L }           # LD1 3 reg Q-form
+    ld1_4reg_d:             { lat: 5, tp: 0.67, pipe: L }           # LD1 4 reg D-form
+    ld1_4reg_q:             { lat: 6, tp: 1.33, pipe: L }           # LD1 4 reg Q-form (tp=3/4)
+    ld1_one_lane:           { lat: 7, tp: 0.5,  pipe: "L, V" }     # LD1 single lane
+    ld1r:                   { lat: 7, tp: 0.5,  pipe: "L, V" }     # LD1R all lanes
+    ld2:                    { lat: 7, tp: 1,    pipe: "L, V" }     # LD2 multiple
+    ld3_d:                  { lat: 7, tp: 1.5,  pipe: "L, V" }     # LD3 D-form
+    ld3_q:                  { lat: 9, tp: 3,    pipe: "L, V" }     # LD3 Q-form
+    ld4_d:                  { lat: 7, tp: 2,    pipe: "L, V" }     # LD4 D-form
+    ld4_q:                  { lat: 9, tp: 4.5,  pipe: "L, V" }     # LD4 Q-form
+    st1_1reg:               { lat: 2, tp: 0.5,  pipe: "L01, V" }   # ST1 1 reg
+    st1_2reg:               { lat: 2, tp: 0.5,  pipe: "L01, V" }   # ST1 2 reg
+    st1_3reg:               { lat: 2, tp: 1,    pipe: "L01, V" }   # ST1 3 reg
+    st1_4reg:               { lat: 2, tp: 1,    pipe: "L01, V" }   # ST1 4 reg
+    st2:                    { lat: 4, tp: 1,    pipe: "V, L01" }   # ST2
+    st3:                    { lat: 6, tp: 3,    pipe: "V, L01" }   # ST3
+    st4_d:                  { lat: 6, tp: 3,    pipe: "V, L01" }   # ST4 D-form
+    st4_q:                  { lat: 7, tp: 6,    pipe: "V, L01" }   # ST4 Q-form
+
+  # ===========================================================================
+  # Cryptography (AArch64) -- SWOG Tables 3-34
+  # ===========================================================================
+  crypto:
+    aes:                    { lat: 2, tp: 0.5,  pipe: V, note: "AESE/AESD/AESMC/AESIMC; fused pairs lat=2, tp=2/cycle" }
+    pmull_64x64:            { lat: 2, tp: 1,    pipe: V0 }          # PMULL (64x64)
+    sha1_hash:              { lat: 2, tp: 1,    pipe: V0 }          # SHA1H
+    sha1_schedule:          { lat: 2, tp: 1,    pipe: V0 }          # SHA1SU0, SHA1SU1
+    sha1_cpm:               { lat: 4, tp: 1,    pipe: V0 }          # SHA1C, SHA1M, SHA1P
+    sha256_hash:            { lat: 4, tp: 1,    pipe: V0 }          # SHA256H, SHA256H2
+    sha256_schedule:        { lat: 2, tp: 1,    pipe: V0 }          # SHA256SU0, SHA256SU1
+
+memory_system:
+  # Load/store queue depths: not disclosed in SWOG/TRM public docs.
+  # Retained from widely-cited reverse-engineering data (Chips and Cheese analysis).
+  load_queue_depth: 68
+  store_queue_depth: 44
+  # TRM 2.6.2: Cache behavior
+  store_to_load_forwarding:
+    # SWOG 4.6: Store-to-load forwarding rules
+    - "Load start address must align with start or middle of older store"
+    - "Loads > 8 bytes can forward from max 2 stores (each half)"
+    - "Loads <= 8 bytes can forward from only 1 store"
+  # SWOG 4.5: Load/Store alignment
+  alignment_penalties:
+    - "Loads crossing 64-byte cache-line boundary"
+    - "Q-word loads not 4-byte aligned"
+    - "Stores crossing 32-byte boundary"
+  # DC ZVA block size
+  dc_zva_block_bytes: 64       # TRM 2.6.5: DC ZVA zeroes a 64-byte aligned block
+  # TLB structure (TRM 2.6.3.1 and 2.6.1)
+  l1_itlb: { entries: "fully associative", page_sizes: [4KB, 16KB, 64KB, 2MB] }
+  l1_dtlb: { entries: "fully associative", page_sizes: [4KB, 16KB, 64KB, 2MB, 512MB] }
+  l2_tlb:
+    note: "unified, supports 4 concurrent table walks, services 2 lookups/cycle, ~3 cycle access"
+    access_latency: 3           # TRM: "Access to the L2 TLB usually takes three cycles"
+  tlb_miss_penalty: 30          # approximate; hardware table walk latency varies
+  page_sizes_kb: [4, 16, 64, 2048, 524288]  # 4KB, 16KB, 64KB, 2MB, 512MB
+
+  # Data prefetching (TRM 2.6.5)
+  prefetcher:
+    - "HW stride prefetcher targets both L1 and L2 (load side, virtual address)"
+    - "Store side prefetcher targets L2 only (physical address)"
+    - "Configurable via CPUECTLR_EL1"
+
+# ===========================================================================
+# A78-specific optimization tips (SWOG Chapter 4)
+# ===========================================================================
+optimization_tips:
+  # SWOG 4.3: GPR spill/fill to VPR is faster than memory
+  gpr_spill_to_vpr: "Register transfers GPR <-> VPR are lower latency than cache; prefer spilling GPR to VPR over memory"
+
+  # SWOG 4.4: Memory copy optimization
+  memcpy: |
+    Use non-writeback LDP/STP Q-form, interleaved LDP+STP per 32 bytes.
+    Unroll to minimize loop overhead. Avoid LDM/STM in AArch32.
+  memset_zero: "Use DC ZVA for zero-fill (64-byte blocks)"
+
+  # SWOG 4.7: AES optimization
+  aes: "Interleave at least 4 data chunks for max throughput; keep AESE+AESMC adjacent with same dest reg"
+
+  # SWOG 4.8: Region-based fast forwarding
+  forwarding_regions: |
+    Region 1: ASIMD int ALU/shift/insert/move/abs/cmp/max/min/misc
+    Region 2: FP/ASIMD FP mul/fma/compare/add/sub + misc
+    Region 3: Crypto SHA1/SHA256
+    Region 4: AES, polynomial multiply + Region 1
+    Cross-region forwarding adds +1 cycle latency. Do not interleave regions.
+
+  # SWOG 4.2: Dispatch stall
+  dispatch_stall: "V-pipe uOP with >1 Q-reg source previously written as single words: 3-cycle stall (first occurrence only)"
+
+  # SWOG 4.9: Branch alignment
+  branch_density: "Avoid >4 branch instructions per aligned 32-byte region"
+
+  # SWOG 4.13: IT blocks
+  it_blocks: "Prefer multi-instruction IT blocks over multiple single-instruction IT blocks"
+
+  # SWOG 4.16: ARM/Thumb mixing
+  arm_thumb_mixing: "Avoid mixing ARM and Thumb in the same cache line"
+
+  # SWOG 4.17: Cache maintenance
+  cache_maintenance: "For set/way invalidation, traverse sets in inner loop, ways in outer loop"
+
+  # SWOG 4.18: Complex ASIMD to avoid
+  complex_asimd_avoid:
+    - "LD4R post-indexed, 64-bit element"
+    - "LD4 single 4-element, post-indexed, 64-bit"
+    - "LD4 multiple 4-element, Q-form"
+    - "LD4 multiple, D-word form"
+    - "ST4 multiple Q-form, <64-bit element"
+    - "ST4 multiple Q-form, 64-bit, post-indexed"
+
+os_overhead:
+  # These are estimated cycle counts (not from the ARM docs; retained from original profile)
+  syscall: 500
+  thread_create: 15000
+  fork: 50000
+  cpu_migration: 5000
+  mutex_lock_unlock: 25
+  spinlock: 12
+  rwlock_read: 20
+  rwlock_write: 25
+  futex: 100
+  atomic_seq_cst: 30
+  atomic_acq_rel: 15
+  atomic_relaxed: 1
+  malloc_16b: 50
+  malloc_256b: 55
+  malloc_4kb: 80
+  malloc_1mb: 2000
+  mmap_anon: 3000
+  minor_page_fault: 800
+  major_page_fault: 50000
+  huge_page_alloc: 1200
+  file_open_close: 3000
+  read_4kb: 1500
+  write_4kb: 1800
+  fsync: 50000
+  pipe_roundtrip: 5000
+  eventfd_roundtrip: 3000
+  signal_delivery: 4000
+  sched_yield: 2000
+  timer_resolution_ns: 50
+  context_switch: 3000

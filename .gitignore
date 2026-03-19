@@ -1,0 +1,6 @@
+.DS_Store
+*.o
+*.d
+build/
+reference/
+/tmp/
