@@ -10,6 +10,94 @@
 
 A Claude Code superpowers skill that analyzes and optimizes C++ code for target platforms (ARM/X86). It operates as a 7-stage pipeline: static analysis, optional instrumentation profiling, performance report, benchmark generation, cross-compilation with disassembly analysis, remote execution, and data-driven optimization.
 
+### Architecture Overview
+
+```mermaid
+graph TB
+    subgraph Input["Stage 1: Input Parsing"]
+        I1[Code Snippet] --> PARSE
+        I2[Git Diff] --> PARSE
+        I3[File / Function] --> PARSE
+        PARSE[Parse & Expand Context]
+    end
+
+    subgraph Analysis["Stage 2: Static Analysis"]
+        PARSE --> L1[Algorithm Layer]
+        PARSE --> L2[Language Layer]
+        PARSE --> L3[Microarchitecture Layer]
+        PARSE --> L4[System Layer]
+        L1 & L2 & L3 & L4 --> KB["Knowledge Base\n14 patterns + 25 libraries"]
+        KB --> SCORE["Score Issues\n(cycle estimation + sanity checks)"]
+        PROFILE[("Platform Profile\n(YAML, cycles)")] -.-> SCORE
+    end
+
+    subgraph Instrument["Stage 2.5: Instrumentation (Optional)"]
+        SCORE -->|LOW confidence| PROBE["Insert TLS Probes\n(L1→L2→L3 iterative)"]
+        PROBE --> XCOMP1["Cross-Compile\n(host)"]
+        XCOMP1 --> RUN1["Run on Target\n(SSH)"]
+        RUN1 --> HOTSPOT["Hotspot Report\n(cycle breakdown)"]
+        HOTSPOT -->|drill down| PROBE
+    end
+
+    subgraph Report["Stage 3: Performance Report"]
+        SCORE -->|HIGH confidence| RPT
+        HOTSPOT --> RPT["Graded Report\n🔴 High  🟡 Medium  🟢 Low"]
+        RPT -->|user selects issues| SEL["Selected Issues"]
+        RPT -->|"user says 'stop'"| DONE_RPT(("Done\n(report only)"))
+    end
+
+    subgraph Benchmark["Stage 4: Benchmark & Baseline"]
+        SEL --> GEN["Generate Benchmark\n(from template)"]
+        GEN --> XCOMP2["Cross-Compile\n(host)"]
+        XCOMP2 --> DISASM["Disassemble\n(verify compiler output)"]
+        DISASM -->|"contradicts analysis"| RETRACT["Retract Issue"]
+        DISASM -->|"confirms"| UPLOAD["SCP to Target"]
+        UPLOAD --> EXEC["Execute & Collect\n(JSON stats)"]
+        EXEC --> BASELINE["Baseline Data\nmedian / p99 / stddev"]
+    end
+
+    subgraph Optimize["Stage 5: Optimize & Verify"]
+        BASELINE --> OPTGEN["Generate\nOptimized Code"]
+        OPTGEN --> CORRECT["Correctness Check\n(baseline vs optimized)"]
+        CORRECT -->|mismatch| OPTGEN
+        CORRECT -->|pass| XCOMP3["Cross-Compile\nOptimized"]
+        XCOMP3 --> DISASM2["Disassemble\n(confirm expected instructions)"]
+        DISASM2 --> EXEC2["Execute on Target"]
+        EXEC2 --> CMP["Comparison Report\nbaseline vs optimized\nspeedup + correctness"]
+    end
+
+    subgraph Iterate["Stage 6: Iteration"]
+        CMP -->|"< 1.0x regression"| REVERT["REVERT\n(negative result = data)"]
+        CMP -->|"1.0x-1.2x"| ACCEPT(("Accept\n(good enough)"))
+        CMP -->|"> 1.2x"| DELIVER(("Deliver\nOptimized Code"))
+        CMP -->|"user: retry"| ALT["Try Alternative\nStrategy"]
+        ALT --> OPTGEN
+    end
+
+    subgraph Data["Data Sources"]
+        direction LR
+        PROF_YAML[("profiles/*.yaml\nCortex-A78, A55\nNeoverse-N1, Skylake")]
+        PATTERNS[("knowledge/patterns/\nvectorization, memory\nbranching, compute\nsystem")]
+        LIBS[("knowledge/libraries.yaml\n25+ alternatives")]
+        PROFILER[("profiler/\nC++ hardware\nmeasurement tool")]
+        PROFILER -->|generates| PROF_YAML
+    end
+
+    PROF_YAML -.-> PROFILE
+    PATTERNS -.-> KB
+    LIBS -.-> KB
+
+    classDef stage fill:#1a1a2e,stroke:#e94560,color:#fff
+    classDef data fill:#0f3460,stroke:#16213e,color:#fff
+    classDef decision fill:#533483,stroke:#e94560,color:#fff
+    classDef endpoint fill:#2d6a4f,stroke:#40916c,color:#fff
+
+    class PARSE,SCORE,PROBE,XCOMP1,RUN1,HOTSPOT,GEN,XCOMP2,DISASM,UPLOAD,EXEC,OPTGEN,CORRECT,XCOMP3,DISASM2,EXEC2 stage
+    class PROF_YAML,PATTERNS,LIBS,PROFILER data
+    class RPT,CMP decision
+    class DONE_RPT,ACCEPT,DELIVER endpoint
+```
+
 ### What It Does
 
 Give it C++ code (snippet, git diff, or file reference) and a target platform. It will:
@@ -145,6 +233,94 @@ platforms:
 ## 中文
 
 一个 Claude Code 超能力技能（superpowers skill），用于自动分析和优化 C++ 代码在目标平台（ARM/X86）上的性能。采用 7 阶段流水线：静态分析、可选插桩测量、性能报告、基准测试生成、交叉编译+反汇编分析、远程执行、数据驱动优化。
+
+### 架构总览
+
+```mermaid
+graph TB
+    subgraph 输入["阶段 1：输入解析"]
+        I1[代码片段] --> PARSE
+        I2[Git Diff] --> PARSE
+        I3[文件/函数引用] --> PARSE
+        PARSE[解析 & 扩展上下文]
+    end
+
+    subgraph 分析["阶段 2：静态分析"]
+        PARSE --> L1[算法层]
+        PARSE --> L2[语言层]
+        PARSE --> L3[微架构层]
+        PARSE --> L4[系统层]
+        L1 & L2 & L3 & L4 --> KB["知识库\n14 个优化模式 + 25 个库替代"]
+        KB --> SCORE["评分\n(cycle 估算 + 三重检查)"]
+        PROFILE[("平台 Profile\n(YAML, cycles)")] -.-> SCORE
+    end
+
+    subgraph 插桩["阶段 2.5：插桩测量（可选）"]
+        SCORE -->|低置信度| PROBE["插入 TLS 探针\n(L1→L2→L3 迭代)"]
+        PROBE --> XCOMP1["交叉编译\n(宿主机)"]
+        XCOMP1 --> RUN1["目标板运行\n(SSH)"]
+        RUN1 --> HOTSPOT["热点报告\n(cycle 分布)"]
+        HOTSPOT -->|继续下钻| PROBE
+    end
+
+    subgraph 报告["阶段 3：性能报告"]
+        SCORE -->|高置信度| RPT
+        HOTSPOT --> RPT["分级报告\n🔴 高影响  🟡 中影响  🟢 低影响"]
+        RPT -->|用户选择优化项| SEL["选中的问题"]
+        RPT -->|"用户说 'stop'"| DONE_RPT(("完成\n(仅报告)"))
+    end
+
+    subgraph 基准测试["阶段 4：基准测试 & Baseline"]
+        SEL --> GEN["生成 Benchmark\n(从模板)"]
+        GEN --> XCOMP2["交叉编译\n(宿主机)"]
+        XCOMP2 --> DISASM["反汇编\n(验证编译器输出)"]
+        DISASM -->|"与分析矛盾"| RETRACT["撤回该优化项"]
+        DISASM -->|"确认"| UPLOAD["SCP 上传"]
+        UPLOAD --> EXEC["执行 & 采集\n(JSON 统计)"]
+        EXEC --> BASELINE["Baseline 数据\nmedian / p99 / stddev"]
+    end
+
+    subgraph 优化["阶段 5：优化 & 验证"]
+        BASELINE --> OPTGEN["生成\n优化代码"]
+        OPTGEN --> CORRECT["正确性验证\n(baseline vs 优化版)"]
+        CORRECT -->|不一致| OPTGEN
+        CORRECT -->|通过| XCOMP3["交叉编译\n优化版"]
+        XCOMP3 --> DISASM2["反汇编\n(确认预期指令)"]
+        DISASM2 --> EXEC2["目标板执行"]
+        EXEC2 --> CMP["对比报告\nbaseline vs 优化版\n加速比 + 正确性"]
+    end
+
+    subgraph 迭代["阶段 6：迭代"]
+        CMP -->|"< 1.0x 倒退"| REVERT["回滚\n(负结果也是数据)"]
+        CMP -->|"1.0x-1.2x"| ACCEPT(("接受现状\n(已足够好)"))
+        CMP -->|"> 1.2x"| DELIVER(("交付\n优化代码"))
+        CMP -->|"用户要求重试"| ALT["尝试替代策略"]
+        ALT --> OPTGEN
+    end
+
+    subgraph 数据源["数据源"]
+        direction LR
+        PROF_YAML[("profiles/*.yaml\nCortex-A78, A55\nNeoverse-N1, Skylake")]
+        PATTERNS[("knowledge/patterns/\n向量化、内存\n分支、计算、系统")]
+        LIBS[("knowledge/libraries.yaml\n25+ 替代方案")]
+        PROFILER[("profiler/\nC++ 硬件\n测量工具")]
+        PROFILER -->|生成| PROF_YAML
+    end
+
+    PROF_YAML -.-> PROFILE
+    PATTERNS -.-> KB
+    LIBS -.-> KB
+
+    classDef stage fill:#1a1a2e,stroke:#e94560,color:#fff
+    classDef data fill:#0f3460,stroke:#16213e,color:#fff
+    classDef decision fill:#533483,stroke:#e94560,color:#fff
+    classDef endpoint fill:#2d6a4f,stroke:#40916c,color:#fff
+
+    class PARSE,SCORE,PROBE,XCOMP1,RUN1,HOTSPOT,GEN,XCOMP2,DISASM,UPLOAD,EXEC,OPTGEN,CORRECT,XCOMP3,DISASM2,EXEC2 stage
+    class PROF_YAML,PATTERNS,LIBS,PROFILER data
+    class RPT,CMP decision
+    class DONE_RPT,ACCEPT,DELIVER endpoint
+```
 
 ### 功能概述
 
