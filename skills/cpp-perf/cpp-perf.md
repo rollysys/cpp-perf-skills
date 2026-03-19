@@ -60,10 +60,10 @@ Scan the code and determine which layers apply:
 
 **Step 2 — Consult knowledge base** (budget: up to 20% context window):
 
-1. For each relevant layer, use `Glob` to list pattern files: `skills/cpp-perf/knowledge/patterns/<layer>/*.md`
+1. Use `Glob` to list all pattern files: `skills/cpp-perf/knowledge/patterns/**/*.md`
 2. **If no pattern files exist** (Plan 2 not yet implemented), skip this step and rely on LLM knowledge
-3. If pattern files exist, read the frontmatter of each (first 10 lines) to check `keywords`
-4. If any keyword matches a code characteristic, read the full pattern file
+3. If pattern files exist, read the frontmatter of each (first 10 lines) to check `keywords` and `layers`
+4. If any keyword matches a code characteristic AND the pattern's `layers` overlap with the relevant analysis layers, read the full pattern file
 5. Use the pattern's Detection, Transformation, and Expected Impact sections to inform your analysis
 
 **Step 3 — Consult library registry:**
