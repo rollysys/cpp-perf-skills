@@ -14,10 +14,11 @@ namespace profiler {
 
 // ============================================================
 // Helper: latency measurement (dependency chain with clobber)
+// Returns CYCLES (via ns_to_cycles calibration)
 // ============================================================
 template <typename T, typename Op>
 static double lat(Op op, int chain = 100000, int iters = 30, int warmup = 3) {
-    return measure_ns_per_op([&]() {
+    double ns = measure_ns_per_op([&]() {
         T val = op.init();
         for (int i = 0; i < chain; i++) {
             val = op(val);
@@ -25,14 +26,16 @@ static double lat(Op op, int chain = 100000, int iters = 30, int warmup = 3) {
         }
         escape(val);
     }, chain, iters, warmup);
+    return ns_to_cycles(ns);
 }
 
 // ============================================================
 // Helper: throughput measurement (8 independent streams, no clobber)
+// Returns CYCLES (via ns_to_cycles calibration)
 // ============================================================
 template <typename T, typename Op>
 static double tp(Op op, int iters = 200000, int runs = 15, int warmup = 2) {
-    return measure_ns_per_op([&]() {
+    double ns = measure_ns_per_op([&]() {
         T a = op.init(), b = op.init(), c = op.init(), d = op.init();
         T e = op.init(), f = op.init(), g = op.init(), h = op.init();
         for (int i = 0; i < iters; i++) {
@@ -42,6 +45,7 @@ static double tp(Op op, int iters = 200000, int runs = 15, int warmup = 2) {
         escape(a); escape(b); escape(c); escape(d);
         escape(e); escape(f); escape(g); escape(h);
     }, 8 * iters, runs, warmup);
+    return ns_to_cycles(ns);
 }
 
 // ============================================================
@@ -102,32 +106,32 @@ struct VecMin { vf32 init() { return vdupq_n_f32(100.0f); }
 struct VecCvt { vf32 init() { return vdupq_n_f32(1.5f); }
     vf32 operator()(vf32 v) { return vcvtq_f32_s32(vcvtq_s32_f32(vaddq_f32(v, vdupq_n_f32(0.1f)))); } };
 
-// Load/Store throughput
+// Load/Store throughput (returns cycles)
 static double measure_vec_load_tp() {
     constexpr int N = 1024 * 256;  // 1MB of floats
     static float data[N] __attribute__((aligned(64)));
     for (int i = 0; i < N; i++) data[i] = (float)i;
     constexpr int OPS = N / 4;  // 4 floats per vector load
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         vf32 sum = vdupq_n_f32(0);
         for (int i = 0; i < N; i += 4) {
             sum = vaddq_f32(sum, vld1q_f32(&data[i]));
         }
         escape(sum);
-    }, OPS, 20, 3);
+    }, OPS, 20, 3));
 }
 
 static double measure_vec_store_tp() {
     constexpr int N = 1024 * 256;
     static float data[N] __attribute__((aligned(64)));
     constexpr int OPS = N / 4;
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         vf32 val = vdupq_n_f32(42.0f);
         for (int i = 0; i < N; i += 4) {
             vst1q_f32(&data[i], val);
         }
         clobber();
-    }, OPS, 20, 3);
+    }, OPS, 20, 3));
 }
 
 #elif defined(__x86_64__)
@@ -151,24 +155,24 @@ static double measure_vec_load_tp() {
     static float data[N] __attribute__((aligned(64)));
     for (int i = 0; i < N; i++) data[i] = (float)i;
     constexpr int OPS = N / 4;
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         __m128 sum = _mm_setzero_ps();
         for (int i = 0; i < N; i += 4)
             sum = _mm_add_ps(sum, _mm_load_ps(&data[i]));
         escape(sum);
-    }, OPS, 20, 3);
+    }, OPS, 20, 3));
 }
 
 static double measure_vec_store_tp() {
     constexpr int N = 1024 * 256;
     static float data[N] __attribute__((aligned(64)));
     constexpr int OPS = N / 4;
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         __m128 val = _mm_set1_ps(42.0f);
         for (int i = 0; i < N; i += 4)
             _mm_store_ps(&data[i], val);
         clobber();
-    }, OPS, 20, 3);
+    }, OPS, 20, 3));
 }
 #endif
 
@@ -182,38 +186,38 @@ static double measure_vec_store_tp() {
 static double measure_lse_ldadd() {
     std::atomic<int64_t> val{0};
     constexpr int N = 100000;
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         for (int i = 0; i < N; i++)
             val.fetch_add(1, std::memory_order_relaxed);
-    }, N, 30, 3);
+    }, N, 30, 3));
 }
 
 static double measure_lse_cas() {
     std::atomic<int64_t> val{0};
     constexpr int N = 100000;
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         int64_t expected = val.load(std::memory_order_relaxed);
         for (int i = 0; i < N; i++) {
             int64_t desired = expected + 1;
             val.compare_exchange_weak(expected, desired, std::memory_order_relaxed);
             expected = desired;
         }
-    }, N, 30, 3);
+    }, N, 30, 3));
 }
 
 static double measure_lse_swp() {
     std::atomic<int64_t> val{0};
     constexpr int N = 100000;
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         for (int i = 0; i < N; i++)
             val.exchange(i, std::memory_order_relaxed);
-    }, N, 30, 3);
+    }, N, 30, 3));
 }
 
 // DotProd: SDOT/UDOT for int8 dot products (ARMv8.2-A+)
 static double measure_dotprod() {
     constexpr int N = 100000;
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         int32x4_t acc = vdupq_n_s32(0);
         int8x16_t a = vdupq_n_s8(1);
         int8x16_t b = vdupq_n_s8(2);
@@ -222,13 +226,13 @@ static double measure_dotprod() {
             clobber();
         }
         escape(acc);
-    }, N, 30, 3);
+    }, N, 30, 3));
 }
 
 // FP16: half-precision arithmetic (ARMv8.2-A FP16 extension)
 static double measure_fp16_mul_tp() {
     constexpr int OPS = 8 * 200000;
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         float16x8_t a = vdupq_n_f16(1.001f);
         float16x8_t b = vdupq_n_f16(1.001f);
         float16x8_t c = vdupq_n_f16(1.001f);
@@ -246,12 +250,12 @@ static double measure_fp16_mul_tp() {
         }
         escape(a); escape(b); escape(c); escape(d);
         escape(e); escape(f2); escape(g); escape(h);
-    }, OPS, 10, 2);
+    }, OPS, 10, 2));
 }
 
 static double measure_fp16_fma_tp() {
     constexpr int OPS = 8 * 200000;
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         float16x8_t a = vdupq_n_f16(1.0f);
         float16x8_t b = vdupq_n_f16(1.0f);
         float16x8_t c = vdupq_n_f16(1.0f);
@@ -269,25 +273,25 @@ static double measure_fp16_fma_tp() {
         }
         escape(a); escape(b); escape(c); escape(d);
         escape(e); escape(f2); escape(g); escape(h);
-    }, OPS, 10, 2);
+    }, OPS, 10, 2));
 }
 
 // CRC32 hardware acceleration (ARMv8.1-A+)
 static double measure_crc32() {
     constexpr int N = 100000;
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         uint32_t crc = 0;
         for (int i = 0; i < N; i++) {
             crc = __builtin_arm_crc32w(crc, (uint32_t)i);
         }
         escape(crc);
-    }, N, 30, 3);
+    }, N, 30, 3));
 }
 
 // AES single round (AESE+AESMC)
 static double measure_aes_round() {
     constexpr int N = 100000;
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         uint8x16_t data = vdupq_n_u8(0x42);
         uint8x16_t key = vdupq_n_u8(0x13);
         for (int i = 0; i < N; i++) {
@@ -295,7 +299,7 @@ static double measure_aes_round() {
             clobber();
         }
         escape(data);
-    }, N, 30, 3);
+    }, N, 30, 3));
 }
 
 #endif // __aarch64__
@@ -307,20 +311,20 @@ static double measure_scalar_load_tp() {
     constexpr int N = 1024 * 1024;  // 4MB (fits in L2/L3)
     static int32_t data[N];
     for (int i = 0; i < N; i++) data[i] = i;
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         int32_t sum = 0;
         for (int i = 0; i < N; i++) sum += data[i];
         escape(sum);
-    }, N, 20, 3);
+    }, N, 20, 3));
 }
 
 static double measure_scalar_store_tp() {
     constexpr int N = 1024 * 1024;
     static int32_t data[N];
-    return measure_ns_per_op([&]() {
+    return ns_to_cycles(measure_ns_per_op([&]() {
         for (int i = 0; i < N; i++) data[i] = i;
         clobber();
-    }, N, 20, 3);
+    }, N, 20, 3));
 }
 
 // ============================================================
@@ -328,6 +332,10 @@ static double measure_scalar_store_tp() {
 // ============================================================
 
 void measure_compute() {
+    fprintf(stderr, "  calibrating ns-to-cycle ratio...\n");
+    double ns_per_cyc = calibrate_ns_per_cycle();
+    fprintf(stderr, "  calibration: %.3f ns/cycle (%.2f GHz)\n", ns_per_cyc, 1.0 / ns_per_cyc);
+
     fprintf(stderr, "  integer latency...\n");
     record("instructions.integer", "add_lat",    lat<uint64_t>(IntAdd{}));
     record("instructions.integer", "sub_lat",    lat<uint64_t>(IntSub{}));

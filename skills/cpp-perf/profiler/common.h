@@ -151,6 +151,45 @@ double measure_cycles_per_op(Fn fn, int ops_per_call, int iterations = 1000, int
 }
 
 // ============================================================
+// Calibration: convert nanoseconds to CPU cycles
+// ============================================================
+// Uses a dependent integer-add chain (guaranteed 1 cycle latency on all
+// modern CPUs) to measure the ns-per-cycle ratio.  All profiler
+// measurements go through measure_ns(); this lets us convert to cycles.
+inline double calibrate_ns_per_cycle() {
+    static double ns_per_cyc = []() -> double {
+        constexpr int CHAIN = 1000000;
+        // Measure a dependent add chain (1 cycle latency per add)
+        double add_ns = measure_ns([&]() {
+            uint64_t val = 1;
+            for (int i = 0; i < CHAIN; i++) {
+                val = val + 7;
+                clobber();
+            }
+            escape(val);
+        }, 10, 2);
+        // Measure loop + clobber overhead
+        double overhead_ns = measure_ns([&]() {
+            uint64_t val = 1;
+            for (int i = 0; i < CHAIN; i++) {
+                clobber();
+            }
+            escape(val);
+        }, 10, 2);
+        double result = (add_ns - overhead_ns) / CHAIN;
+        // Sanity: clamp to plausible range (0.1 ns/cyc = 10 GHz, 2 ns/cyc = 0.5 GHz)
+        if (result < 0.1) result = 0.1;
+        if (result > 2.0) result = 2.0;
+        return result;
+    }();
+    return ns_per_cyc;
+}
+
+inline double ns_to_cycles(double ns) {
+    return ns / calibrate_ns_per_cycle();
+}
+
+// ============================================================
 // SIGILL-safe instruction probing
 // Try to execute an instruction; if it causes SIGILL, return false.
 // Used to detect platform support before running measurements.

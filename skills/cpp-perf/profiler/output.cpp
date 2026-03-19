@@ -95,7 +95,7 @@ static const KnownCoreMicroarch known_microarch[] = {
     { "Cortex-A78",  4, 2, 160,  3, 2, 2, 1, 1,  31, 32 },
     { "Cortex-A55",  2, 2,   0,  1, 1, 1, 1, 1,  31, 32 },
     { "Cortex-A76",  4, 2, 128,  3, 2, 2, 1, 1,  31, 32 },
-    { "Neoverse-N1", 4, 2, 128,  3, 2, 2, 1, 1,  31, 32 },
+    { "Neoverse-N1", 4, 8, 128,  3, 2, 2, 1, 1,  31, 32 },
     { "Neoverse-N2", 5, 2, 160,  3, 2, 2, 2, 1,  31, 32 },
     { nullptr, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
 };
@@ -266,18 +266,21 @@ static CpuInfo detect_cpu() {
 // YAML formatting helpers
 // ============================================================
 
-// Format a value: integers as int, otherwise 1 decimal place
+// Format a value: integers as int, sub-1 values keep at least 2 decimal
+// places so throughput numbers like 0.25 or 0.50 are never truncated to 0.
 static std::string fmt_val(double v) {
     char buf[64];
     if (v == (int64_t)v && v >= -1e15 && v <= 1e15) {
         snprintf(buf, sizeof(buf), "%lld", (long long)v);
     } else {
         snprintf(buf, sizeof(buf), "%.2f", v);
-        // Strip trailing zeros after decimal (but keep at least one)
+        // Strip trailing zeros, but keep at least 2 decimals for sub-1 values
+        // so e.g. 0.25 stays "0.25" and 0.50 stays "0.5" (not "0")
         char* dot = strchr(buf, '.');
         if (dot) {
+            int min_decimals = (v > -1.0 && v < 1.0 && v != 0.0) ? 2 : 1;
             char* end = buf + strlen(buf) - 1;
-            while (end > dot + 1 && *end == '0') {
+            while (end > dot + min_decimals && *end == '0') {
                 *end = '\0';
                 --end;
             }

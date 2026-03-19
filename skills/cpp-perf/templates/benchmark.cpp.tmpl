@@ -18,6 +18,11 @@ __attribute__((noinline)) void do_not_optimize(T const& value) {
     asm volatile("" : : "r,m"(value) : "memory");
 }
 
+// Prevent reordering (use with void-returning functions)
+inline void clobber() {
+    asm volatile("" ::: "memory");
+}
+
 // ============================================================
 // Test data setup
 // ============================================================
@@ -108,6 +113,10 @@ int main() {
     auto data = setup_data();
 
     // Warmup
+    // NOTE: If {{FUNCTION_CALL}} returns void, replace:
+    //   auto result = {{FUNCTION_CALL}}; do_not_optimize(result);
+    // with:
+    //   {{FUNCTION_CALL}}; clobber();
     for (int i = 0; i < WARMUP; i++) {
         auto result = {{FUNCTION_CALL}};
         do_not_optimize(result);

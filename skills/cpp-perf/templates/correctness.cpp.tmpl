@@ -19,19 +19,20 @@ bool compare(const T& a, const T& b) {
     return a == b;
 }
 
-// Float comparison with epsilon
+// Float comparison with relative epsilon and absolute floor
+// The fmax(relative, absolute) ensures near-zero values still compare correctly.
 bool compare(float a, float b) {
     if (a == b) return true;
     float diff = std::fabs(a - b);
     float largest = std::fmax(std::fabs(a), std::fabs(b));
-    return diff <= largest * {{EPSILON}};
+    return diff <= std::fmax(largest * {{EPSILON}}, (float){{EPSILON}});
 }
 
 bool compare(double a, double b) {
     if (a == b) return true;
     double diff = std::fabs(a - b);
     double largest = std::fmax(std::fabs(a), std::fabs(b));
-    return diff <= largest * {{EPSILON}};
+    return diff <= std::fmax(largest * {{EPSILON}}, (double){{EPSILON}});
 }
 
 int main() {

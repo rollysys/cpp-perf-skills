@@ -1,4 +1,4 @@
-# unverified — values from spec, pending PDF verification
+# values from ARM Cortex-A78 Software Optimization Guide
 name: Cortex-A78
 arch: aarch64
 vendor: ARM
