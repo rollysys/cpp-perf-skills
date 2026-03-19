@@ -392,10 +392,33 @@ After presenting results for all selected issues, ask:
 
 ## Stage 6: Iteration
 
+### Optimization Decision Framework
+
+**When to try an alternative approach:**
+
+| Speedup achieved | Action |
+|------------------|--------|
+| < 1.0x (regression) | STOP. Revert. The "optimization" made things worse. Analyze WHY (compiler already handled it? branchless does more work? cache effects?). Report the finding to user — negative results are valuable data. |
+| 1.0x - 1.2x (negligible) | Accept and conclude. Law of diminishing returns. The code is likely already well-optimized by the compiler for this platform. |
+| 1.2x - 2.0x (moderate) | Accept if the change is clean. Optionally try ONE alternative approach if user requests. |
+| 2.0x - 5.0x (significant) | Good result. Ask user if they want to push further with a different technique. |
+| > 5.0x (major) | Likely algorithmic improvement possible. Check if there's an O(n²)→O(n log n) or similar algorithmic change available. |
+
+**Alternative strategy selection order:**
+1. If current approach was SIMD/vectorization → try data layout change (AoS→SoA)
+2. If current was branch elimination → try algorithmic restructuring
+3. If current was memory optimization → try computation reduction
+4. If current was single-technique → try combining two techniques
+
+**Stopping rules:**
+- Maximum 3 optimization attempts per issue (diminishing returns on engineer time)
+- If 2 consecutive attempts show < 1.1x improvement, the code is near its performance ceiling for this approach
+- Always present the best result achieved, even if later attempts regressed
+
 If the user requests an alternative approach:
 
 1. Analyze why the current optimization underperformed
-2. Propose a different strategy (e.g., if SIMD intrinsics didn't help much, try loop restructuring; if data structure change was too invasive, try algorithmic improvement)
+2. Propose a different strategy using the selection order above
 3. Return to Stage 5a with the new approach
 
 If the user wants additional items:
