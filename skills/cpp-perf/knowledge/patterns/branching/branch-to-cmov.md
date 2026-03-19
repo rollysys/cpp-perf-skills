@@ -147,3 +147,39 @@ This encourages the compiler to emit `cmov`/`csel` instead of a branch, but does
 - **Compiler resistance.** Compilers may refuse to generate CMOV even for simple ternaries. Check the disassembly. Use `__builtin_unpredictable` (Clang 17+) or consider inline assembly as a last resort.
 - **Floating-point:** For FP conditionals, use `FCMOVcc` (x86, legacy) or `VMAXSS`/`VMINSS` for min/max patterns. ARM uses `FCSEL`.
 - **CMOV has data dependency:** Converting control flow to data flow means the CPU cannot speculate past the CMOV. In some cases this can stall the pipeline even without mispredictions.
+
+### Counter-Example: Game of Life (branchless was 3.2x SLOWER)
+
+The perf-ninja `bad_speculation/branches_to_cmov_1` Game of Life benchmark demonstrates when branchless hurts:
+
+```cpp
+// BASELINE (switch) — 77ms on Apple M-series
+switch(aliveNeighbours) {
+    case 0: case 1: future[i][j] = 0; break;
+    case 2: future[i][j] = current[i][j]; break;  // only reads current when needed
+    case 3: future[i][j] = 1; break;
+    default: future[i][j] = 0;
+}
+
+// "OPTIMIZED" (branchless) — 247ms on Apple M-series (3.2x SLOWER!)
+future[i][j] = (alive == 3) | ((alive == 2) & current[i][j]);
+// Always reads current[i][j] even when alive != 2 (70% of the time)
+```
+
+**Why branchless was slower:**
+1. The switch allows skipping `current[i][j]` read in 70% of cases (dead cells with 0-1 neighbors)
+2. Apple Silicon's branch predictor handles spatial patterns in Game of Life extremely well (>90% accuracy)
+3. The branchless version forces an unnecessary memory load every iteration
+
+**Decision framework — when to use branchless:**
+
+| Condition | Branchless helps? |
+|-----------|-------------------|
+| Truly random data (hash lookups, random array indexing) | YES |
+| Pattern-correlated data (Game of Life, image processing) | PROBABLY NOT |
+| Branch avoids significant work (memory load, function call) | NO — keep the branch |
+| Branch only selects between two register values | YES — cheap cmov |
+| Target has weak branch predictor (older ARM, in-order cores) | MORE LIKELY |
+| Target has strong predictor (Apple Silicon, modern x86) | LESS LIKELY |
+
+**Rule of thumb:** If the branchy version skips work that the branchless version must always do, measure before converting.
