@@ -403,7 +403,12 @@ void output_yaml() {
 
         std::vector<InstrGroup> groups;
         // Ordered list of subsection names we expect
-        const char* subsections[] = { "integer", "fp", "fp32", "fp64", "simd", "simd_4xf32", "neon", "memory" };
+        const char* subsections[] = {
+            "integer", "fp", "fp32", "fp64",
+            "simd", "simd_4xf32", "neon",
+            "lse_atomics", "dotprod", "fp16_8xf16", "crypto",
+            "memory"
+        };
 
         for (auto sub : subsections) {
             std::string section = std::string("instructions.") + sub;

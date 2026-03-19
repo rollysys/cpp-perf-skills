@@ -173,6 +173,134 @@ static double measure_vec_store_tp() {
 #endif
 
 // ============================================================
+// ARM-specific: LSE atomics (LDADD, CAS, SWP)
+// Much faster than LL/SC (LDXR/STXR) on cores with LSE support
+// ============================================================
+#if defined(__aarch64__)
+#include <atomic>
+
+static double measure_lse_ldadd() {
+    std::atomic<int64_t> val{0};
+    constexpr int N = 100000;
+    return measure_ns_per_op([&]() {
+        for (int i = 0; i < N; i++)
+            val.fetch_add(1, std::memory_order_relaxed);
+    }, N, 30, 3);
+}
+
+static double measure_lse_cas() {
+    std::atomic<int64_t> val{0};
+    constexpr int N = 100000;
+    return measure_ns_per_op([&]() {
+        int64_t expected = val.load(std::memory_order_relaxed);
+        for (int i = 0; i < N; i++) {
+            int64_t desired = expected + 1;
+            val.compare_exchange_weak(expected, desired, std::memory_order_relaxed);
+            expected = desired;
+        }
+    }, N, 30, 3);
+}
+
+static double measure_lse_swp() {
+    std::atomic<int64_t> val{0};
+    constexpr int N = 100000;
+    return measure_ns_per_op([&]() {
+        for (int i = 0; i < N; i++)
+            val.exchange(i, std::memory_order_relaxed);
+    }, N, 30, 3);
+}
+
+// DotProd: SDOT/UDOT for int8 dot products (ARMv8.2-A+)
+static double measure_dotprod() {
+    constexpr int N = 100000;
+    return measure_ns_per_op([&]() {
+        int32x4_t acc = vdupq_n_s32(0);
+        int8x16_t a = vdupq_n_s8(1);
+        int8x16_t b = vdupq_n_s8(2);
+        for (int i = 0; i < N; i++) {
+            acc = vdotq_s32(acc, a, b);
+            clobber();
+        }
+        escape(acc);
+    }, N, 30, 3);
+}
+
+// FP16: half-precision arithmetic (ARMv8.2-A FP16 extension)
+static double measure_fp16_mul_tp() {
+    constexpr int OPS = 8 * 200000;
+    return measure_ns_per_op([&]() {
+        float16x8_t a = vdupq_n_f16(1.001f);
+        float16x8_t b = vdupq_n_f16(1.001f);
+        float16x8_t c = vdupq_n_f16(1.001f);
+        float16x8_t d = vdupq_n_f16(1.001f);
+        float16x8_t e = vdupq_n_f16(1.001f);
+        float16x8_t f2 = vdupq_n_f16(1.001f);
+        float16x8_t g = vdupq_n_f16(1.001f);
+        float16x8_t h = vdupq_n_f16(1.001f);
+        float16x8_t k = vdupq_n_f16(1.00001f);
+        for (int i = 0; i < 200000; i++) {
+            a = vmulq_f16(a, k); b = vmulq_f16(b, k);
+            c = vmulq_f16(c, k); d = vmulq_f16(d, k);
+            e = vmulq_f16(e, k); f2 = vmulq_f16(f2, k);
+            g = vmulq_f16(g, k); h = vmulq_f16(h, k);
+        }
+        escape(a); escape(b); escape(c); escape(d);
+        escape(e); escape(f2); escape(g); escape(h);
+    }, OPS, 10, 2);
+}
+
+static double measure_fp16_fma_tp() {
+    constexpr int OPS = 8 * 200000;
+    return measure_ns_per_op([&]() {
+        float16x8_t a = vdupq_n_f16(1.0f);
+        float16x8_t b = vdupq_n_f16(1.0f);
+        float16x8_t c = vdupq_n_f16(1.0f);
+        float16x8_t d = vdupq_n_f16(1.0f);
+        float16x8_t e = vdupq_n_f16(1.0f);
+        float16x8_t f2 = vdupq_n_f16(1.0f);
+        float16x8_t g = vdupq_n_f16(1.0f);
+        float16x8_t h = vdupq_n_f16(1.0f);
+        float16x8_t k = vdupq_n_f16(0.00001f);
+        for (int i = 0; i < 200000; i++) {
+            a = vfmaq_f16(a, a, k); b = vfmaq_f16(b, b, k);
+            c = vfmaq_f16(c, c, k); d = vfmaq_f16(d, d, k);
+            e = vfmaq_f16(e, e, k); f2 = vfmaq_f16(f2, f2, k);
+            g = vfmaq_f16(g, g, k); h = vfmaq_f16(h, h, k);
+        }
+        escape(a); escape(b); escape(c); escape(d);
+        escape(e); escape(f2); escape(g); escape(h);
+    }, OPS, 10, 2);
+}
+
+// CRC32 hardware acceleration (ARMv8.1-A+)
+static double measure_crc32() {
+    constexpr int N = 100000;
+    return measure_ns_per_op([&]() {
+        uint32_t crc = 0;
+        for (int i = 0; i < N; i++) {
+            crc = __builtin_arm_crc32w(crc, (uint32_t)i);
+        }
+        escape(crc);
+    }, N, 30, 3);
+}
+
+// AES single round (AESE+AESMC)
+static double measure_aes_round() {
+    constexpr int N = 100000;
+    return measure_ns_per_op([&]() {
+        uint8x16_t data = vdupq_n_u8(0x42);
+        uint8x16_t key = vdupq_n_u8(0x13);
+        for (int i = 0; i < N; i++) {
+            data = vaesmcq_u8(vaeseq_u8(data, key));
+            clobber();
+        }
+        escape(data);
+    }, N, 30, 3);
+}
+
+#endif // __aarch64__
+
+// ============================================================
 // Memory load/store latency and throughput
 // ============================================================
 static double measure_scalar_load_tp() {
@@ -263,6 +391,42 @@ void measure_compute() {
     fprintf(stderr, "  memory scalar...\n");
     record("instructions.memory", "load_tp",   measure_scalar_load_tp());
     record("instructions.memory", "store_tp",  measure_scalar_store_tp());
+
+#if defined(__aarch64__)
+    // Platform-specific instructions with SIGILL protection
+    fprintf(stderr, "  ARM extensions (with feature detection)...\n");
+
+    // LSE atomics — available on ARMv8.1+ (all Apple Silicon, Cortex-A75+)
+    fprintf(stderr, "    LSE atomics...\n");
+    measure_or_skip("instructions.lse_atomics", "ldadd_lat",
+        measure_lse_ldadd, "LDADD (LSE atomic add)");
+    measure_or_skip("instructions.lse_atomics", "cas_lat",
+        measure_lse_cas, "CAS (LSE compare-and-swap)");
+    measure_or_skip("instructions.lse_atomics", "swp_lat",
+        measure_lse_swp, "SWP (LSE swap)");
+
+    // DotProd — ARMv8.2-A DotProd extension
+    fprintf(stderr, "    DotProd (int8)...\n");
+    measure_or_skip("instructions.dotprod", "sdot_lat",
+        measure_dotprod, "SDOT (int8 dot product)");
+
+    // FP16 — ARMv8.2-A FP16 extension
+    fprintf(stderr, "    FP16...\n");
+    measure_or_skip("instructions.fp16_8xf16", "mul_tp",
+        measure_fp16_mul_tp, "FMUL (float16x8)");
+    measure_or_skip("instructions.fp16_8xf16", "fma_tp",
+        measure_fp16_fma_tp, "FMLA (float16x8)");
+
+    // CRC32 — ARMv8.1-A
+    fprintf(stderr, "    CRC32...\n");
+    measure_or_skip("instructions.crypto", "crc32_lat",
+        measure_crc32, "CRC32W");
+
+    // AES — Crypto extension
+    fprintf(stderr, "    AES...\n");
+    measure_or_skip("instructions.crypto", "aes_round_lat",
+        measure_aes_round, "AESE+AESMC");
+#endif
 }
 
 } // namespace profiler

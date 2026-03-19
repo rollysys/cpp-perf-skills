@@ -7,6 +7,8 @@
 #include <cmath>
 #include <functional>
 #include <cstdio>
+#include <csignal>
+#include <csetjmp>
 
 #if defined(__APPLE__) && defined(__aarch64__)
 #include <mach/mach_time.h>
@@ -146,6 +148,49 @@ double measure_cycles(Fn fn, int iterations = 1000, int warmup = 100) {
 template <typename Fn>
 double measure_cycles_per_op(Fn fn, int ops_per_call, int iterations = 1000, int warmup = 100) {
     return measure_ns_per_op(fn, ops_per_call, iterations, warmup);
+}
+
+// ============================================================
+// SIGILL-safe instruction probing
+// Try to execute an instruction; if it causes SIGILL, return false.
+// Used to detect platform support before running measurements.
+// ============================================================
+inline jmp_buf sigill_jmp;
+inline volatile bool sigill_caught;
+
+inline void sigill_handler(int) {
+    sigill_caught = true;
+    longjmp(sigill_jmp, 1);
+}
+
+// Try running fn(). Returns true if it ran without SIGILL, false if instruction not supported.
+template <typename Fn>
+inline bool try_instruction(Fn fn) {
+    sigill_caught = false;
+    struct sigaction sa_new{}, sa_old{};
+    sa_new.sa_handler = sigill_handler;
+    sigemptyset(&sa_new.sa_mask);
+    sa_new.sa_flags = 0;
+    sigaction(SIGILL, &sa_new, &sa_old);
+
+    if (setjmp(sigill_jmp) == 0) {
+        fn();
+    }
+
+    sigaction(SIGILL, &sa_old, nullptr);
+    return !sigill_caught;
+}
+
+// Measure instruction, skip with warning if not supported on this platform
+template <typename Fn>
+inline void measure_or_skip(const std::string& section, const std::string& key,
+                            Fn measure_fn, const char* name) {
+    auto test_fn = [&]() { measure_fn(); };  // dry run to check support
+    if (try_instruction(test_fn)) {
+        record(section, key, measure_fn());
+    } else {
+        fprintf(stderr, "    [skip] %s not supported on this CPU\n", name);
+    }
 }
 
 // Prevent compiler from optimizing away a value
