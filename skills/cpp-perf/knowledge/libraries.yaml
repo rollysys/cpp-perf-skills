@@ -1,0 +1,87 @@
+# High-Performance Library Alternatives Registry
+# integration values: drop-in | minor-api-change | major-refactor
+
+containers:
+  std::unordered_map:
+    alternatives:
+      - name: absl::flat_hash_map
+        header: "absl/container/flat_hash_map.h"
+        lib: abseil-cpp
+        advantage: "Open addressing, less pointer chasing, ~2x faster lookup"
+        integration: drop-in
+        platforms: [arm, x86]
+      - name: robin_hood::unordered_map
+        header: "robin_hood.h"
+        lib: robin-hood-hashing
+        advantage: "Robin hood hashing, very fast for small-medium maps"
+        integration: drop-in
+        platforms: [arm, x86]
+  std::map:
+    alternatives:
+      - name: absl::btree_map
+        header: "absl/container/btree_map.h"
+        lib: abseil-cpp
+        advantage: "B-tree layout, cache-friendly, better for iteration"
+        integration: drop-in
+        platforms: [arm, x86]
+  std::vector:
+    note: "Usually optimal; consider folly::small_vector for small-size-optimized cases"
+
+algorithms:
+  std::sort:
+    alternatives:
+      - name: pdqsort
+        header: "pdqsort.h"
+        lib: header-only (public domain)
+        advantage: "Pattern-defeating quicksort, faster on partially sorted data"
+        integration: drop-in
+        platforms: [arm, x86]
+  std::find:
+    note: "For large collections, suggest container change rather than algorithm change"
+
+strings:
+  std::string:
+    alternatives:
+      - name: folly::fbstring
+        header: "folly/FBString.h"
+        lib: folly
+        advantage: "SSO up to 23 bytes, COW for large strings"
+        integration: drop-in
+        platforms: [arm, x86]
+      - name: absl::string_view
+        header: "absl/strings/string_view.h"
+        lib: abseil-cpp
+        advantage: "Zero-copy for read-only access"
+        integration: minor-api-change
+        min_std: c++11
+        platforms: [arm, x86]
+
+memory:
+  malloc/new:
+    alternatives:
+      - name: jemalloc
+        lib: jemalloc
+        advantage: "Less fragmentation, better multithreaded scaling"
+        integration: drop-in
+        platforms: [arm, x86]
+      - name: mimalloc
+        lib: mimalloc
+        advantage: "Compact, fast, good for ARM"
+        integration: drop-in
+        platforms: [arm, x86]
+
+math:
+  standard math.h:
+    alternatives:
+      - name: Eigen
+        header: "Eigen/Dense"
+        lib: eigen3
+        advantage: "Vectorized linear algebra, expression templates"
+        integration: major-refactor
+        platforms: [arm, x86]
+      - name: SLEEF
+        header: "sleef.h"
+        lib: sleef
+        advantage: "Vectorized math functions (sin/cos/exp), NEON-optimized"
+        integration: minor-api-change
+        platforms: [arm, x86]
