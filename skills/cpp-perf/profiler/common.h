@@ -8,6 +8,10 @@
 #include <functional>
 #include <cstdio>
 
+#if defined(__APPLE__) && defined(__aarch64__)
+#include <mach/mach_time.h>
+#endif
+
 namespace profiler {
 
 // ============================================================
@@ -21,7 +25,19 @@ inline long long now_ns() {
 }
 
 // Cycle counter (platform-specific)
-#if defined(__aarch64__)
+#if defined(__APPLE__) && defined(__aarch64__)
+inline uint64_t rdcycle() {
+    return mach_absolute_time();
+}
+inline uint64_t cycle_freq() {
+    mach_timebase_info_data_t info;
+    mach_timebase_info(&info);
+    // mach_absolute_time returns ticks; ticks * numer / denom = nanoseconds
+    // We want ticks/second: 1e9 * denom / numer
+    return (uint64_t)(1e9 * info.denom / info.numer);
+}
+#elif defined(__aarch64__)
+// Linux ARM: cntvct_el0 generic timer
 inline uint64_t rdcycle() {
     uint64_t val;
     asm volatile("mrs %0, cntvct_el0" : "=r"(val));
