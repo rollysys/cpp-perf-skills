@@ -26,7 +26,7 @@ graph TB
         PARSE --> L2[Language Layer]
         PARSE --> L3[Microarchitecture Layer]
         PARSE --> L4[System Layer]
-        L1 & L2 & L3 & L4 --> KB["Knowledge Base\n14 patterns + 25 libraries"]
+        L1 & L2 & L3 & L4 --> KB["Knowledge Base\n56 patterns + 25+ libraries"]
         KB --> SCORE["Score Issues\n(cycle estimation + sanity checks)"]
         PROFILE[("Platform Profile\n(YAML, cycles)")] -.-> SCORE
     end
@@ -135,7 +135,7 @@ skills/cpp-perf/
 │   └── x86-skylake.yaml
 ├── knowledge/
 │   ├── libraries.yaml          # 25+ high-perf library alternatives
-│   └── patterns/               # 14 optimization patterns from references
+│   └── patterns/               # 56 optimization patterns from references
 │       ├── vectorization/      # Auto-vectorization blockers, NEON idioms, SVE
 │       ├── memory/             # AoS→SoA, loop tiling, prefetch, false sharing
 │       ├── branching/          # Branch→cmov (with counter-examples), lookup tables
@@ -180,15 +180,19 @@ Output is a YAML file compatible with the `profiles/` schema. Supports:
 
 ### Knowledge Base
 
-14 optimization patterns extracted from professional references:
+56 optimization patterns extracted from professional references, organized across 7 categories:
 
-| Source | Patterns |
-|--------|----------|
-| [perf-book](https://book.easyperf.net/perf_book) | Vectorization, memory access, branch prediction |
-| [perf-ninja](https://github.com/dendibakh/perf-ninja) | Data packing, loop tiling, dependency chains, branchless |
-| [ComputeLibrary](https://github.com/ARM-software/ComputeLibrary) | NEON intrinsic idioms |
-| [optimized-routines](https://github.com/ARM-software/optimized-routines) | SVE patterns, FMA utilization |
-| [Cpp-High-Performance](https://github.com/PacktPublishing/Cpp-High-Performance-Second-Edition) | Strength reduction |
+| Category | Patterns |
+|----------|----------|
+| vectorization | Auto-vectorization blockers, NEON idioms, SVE patterns, FP16, DotProd |
+| memory | AoS→SoA, loop tiling, prefetch, false sharing, NUMA, huge pages, alignment |
+| branching | Branch→cmov (with counter-examples), branchless lookup tables, indirect dispatch |
+| compute | Dependency chains, FMA utilization, strength reduction, reciprocal tricks |
+| system | Syscall batching, huge pages, alignment, NUMA-aware allocation |
+| concurrency | Amdahl/USL analysis, dynamic scheduling, lock contention, thread pools, bandwidth saturation |
+| libraries | 25+ high-performance library alternatives (BLAS, SIMD wrappers, allocators, I/O) |
+
+Sources: [perf-book](https://book.easyperf.net/perf_book), [perf-ninja](https://github.com/dendibakh/perf-ninja), [ComputeLibrary](https://github.com/ARM-software/ComputeLibrary), [optimized-routines](https://github.com/ARM-software/optimized-routines), [Cpp-High-Performance](https://github.com/PacktPublishing/Cpp-High-Performance-Second-Edition)
 
 Each pattern includes: problem description, detection method, before/after code, expected impact, and caveats (including when the optimization can make things **worse**).
 
@@ -250,7 +254,7 @@ graph TB
         PARSE --> L2[语言层]
         PARSE --> L3[微架构层]
         PARSE --> L4[系统层]
-        L1 & L2 & L3 & L4 --> KB["知识库\n14 个优化模式 + 25 个库替代"]
+        L1 & L2 & L3 & L4 --> KB["知识库\n56 个优化模式 + 25+ 个库替代"]
         KB --> SCORE["评分\n(cycle 估算 + 三重检查)"]
         PROFILE[("平台 Profile\n(YAML, cycles)")] -.-> SCORE
     end
@@ -359,7 +363,7 @@ skills/cpp-perf/
 │   └── x86-skylake.yaml
 ├── knowledge/
 │   ├── libraries.yaml          # 25+ 高性能库替代方案
-│   └── patterns/               # 14 个优化模式（从专业书籍提取）
+│   └── patterns/               # 56 个优化模式（从专业书籍提取）
 │       ├── vectorization/      # 自动向量化障碍、NEON 惯用法、SVE
 │       ├── memory/             # AoS→SoA、循环分块、预取、伪共享
 │       ├── branching/          # 分支→条件移动（含反面案例）、查找表
@@ -404,15 +408,19 @@ cmake .. && make -j4
 
 ### 知识库
 
-从专业参考资料中提取的 14 个优化模式：
+从专业参考资料中提取的 56 个优化模式，按 7 个类别组织：
 
-| 来源 | 覆盖的模式 |
+| 类别 | 覆盖的模式 |
 |------|-----------|
-| [perf-book](https://book.easyperf.net/perf_book) | 向量化、内存访问优化、分支预测 |
-| [perf-ninja](https://github.com/dendibakh/perf-ninja) | 数据打包、循环分块、依赖链、无分支化 |
-| [ComputeLibrary](https://github.com/ARM-software/ComputeLibrary) | NEON intrinsic 惯用法 |
-| [optimized-routines](https://github.com/ARM-software/optimized-routines) | SVE 模式、FMA 利用 |
-| [Cpp-High-Performance](https://github.com/PacktPublishing/Cpp-High-Performance-Second-Edition) | 强度削减 |
+| 向量化 | 自动向量化障碍、NEON 惯用法、SVE 模式、FP16、DotProd |
+| 内存 | AoS→SoA、循环分块、预取、伪共享、NUMA、大页、对齐 |
+| 分支 | 分支→条件移动（含反面案例）、无分支查找表、间接分发 |
+| 计算 | 依赖链、FMA 利用、强度削减、倒数技巧 |
+| 系统 | 系统调用批处理、大页、对齐、NUMA 感知分配 |
+| 并发 | Amdahl/USL 分析、动态调度、锁竞争、线程池、带宽饱和 |
+| 库 | 25+ 高性能库替代方案（BLAS、SIMD 封装、分配器、I/O） |
+
+来源：[perf-book](https://book.easyperf.net/perf_book)、[perf-ninja](https://github.com/dendibakh/perf-ninja)、[ComputeLibrary](https://github.com/ARM-software/ComputeLibrary)、[optimized-routines](https://github.com/ARM-software/optimized-routines)、[Cpp-High-Performance](https://github.com/PacktPublishing/Cpp-High-Performance-Second-Edition)
 
 每个模式包含：问题描述、检测方法、优化前后代码、预期收益、以及**什么时候不该用**（比如 Game of Life 案例中，"无分支优化"反而导致 3.2 倍性能下降）。
 

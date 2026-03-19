@@ -70,7 +70,7 @@ inline uint64_t probe_timestamp_ns() {
         static_cast<__uint128_t>(tsc) * 1000000000ULL / tsc_freq());
 #else
     struct timespec ts{};
-    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+    clock_gettime(CLOCK_MONOTONIC, &ts);
     return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL
          + static_cast<uint64_t>(ts.tv_nsec);
 #endif

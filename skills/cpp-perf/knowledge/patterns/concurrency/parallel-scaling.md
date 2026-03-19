@@ -67,6 +67,13 @@ perf stat -e offcore_response.all_data_rd.any_response -- ./my_app
 # CPU frequency under load (throttling detection)
 # Monitor with turbostat, VTune platform view, or:
 perf stat -e msr/tsc/,msr/aperf/ -- ./my_app
+
+# Lock contention profiling
+perf lock record -- ./my_app
+perf lock report
+
+# Scheduling visualization
+perf sched record -- ./my_app && perf sched latency
 ```
 
 **SMT scaling measurement:**
@@ -184,7 +191,28 @@ Mitigations (in order of impact):
 
 Key insight from perf-book: "Having 16 active threads is enough to saturate two memory controllers even if CPU cores run at half the frequency. Since most of the time threads are just waiting for data, when you disable Turbo, they simply start to wait slower." Turbo Boost provides zero benefit for bandwidth-saturated workloads.
 
-### Strategy 6: Identify the serial fraction with Coz
+### Strategy 6: Find and fix contended locks
+
+Use timeline visualization and lock profiling to identify synchronization bottlenecks:
+
+```bash
+# Intel VTune Threading Analysis
+vtune -collect threading -r results -- ./my_app
+
+# Linux perf lock contention analysis
+perf lock record -- ./my_app
+perf lock report
+
+# eBPF-based GAPP profiler (no recompilation needed)
+# Tracks futex contention, ranks bottleneck criticality
+# https://github.com/RN-dev-repo/GAPP/
+```
+
+The perf-book demonstrates using VTune's Bottom-up view to trace contended locks through call stacks. In the CPython case, this revealed `take_gil` -> `___pthread_cond_timedwait64` as the serialization point (GIL), with 5ms yield intervals causing alternating execution.
+
+Effective CPU Utilization excludes both *Overhead Time* (runtime library costs) and *Spin Time* (busy-waiting on locks). High spin time means lost opportunity for useful work — distinguish it from contended blocking using VTune's Threading Analysis Spin Time metric.
+
+### Strategy 7: Identify the serial fraction with Coz
 
 Traditional profilers show where time is spent, not where optimization effort matters. Coz uses "virtual speedups" to predict impact:
 
@@ -195,6 +223,8 @@ coz run --- ./my_app
 ```
 
 This is critical for multithreaded programs where Amdahl's law makes intuition unreliable. A function consuming 30% of one thread's time might contribute 0% to overall latency if another thread is slower.
+
+Coz limitations: requires `pthreads` or similar, does not work well with spin-locks, virtual speedup technique can be imprecise for very short regions, does not support Windows.
 
 ## Expected Impact
 
@@ -214,3 +244,5 @@ This is critical for multithreaded programs where Amdahl's law makes intuition u
 - **SMT provides diminishing returns**: perf-book measured only 1.1-1.3x SMT scaling. For SIMD-heavy compute, two sibling threads compete for the same FP execution units.
 - **Hybrid scheduling is OS-dependent**: Intel Thread Director requires Linux 5.18+ or Windows 11. macOS does not provide thread-to-core affinity APIs. ARM big.LITTLE scheduling depends on Energy Aware Scheduling (EAS) in the Linux kernel.
 - **Oversubscription detection requires OS-level metrics**: Preemption Wait Time is not directly visible from user-space counters. Use VTune, `perf sched`, or `/proc/[pid]/status` voluntary/nonvoluntary context switch counters.
+- **NUMA effects on multi-socket systems**: memory accesses to a remote socket's DRAM cost 1.5-3x more than local accesses. Use `numactl --localalloc` or `libnuma` to ensure NUMA-local allocation. The perf-book's single-socket case study does not cover this, but it is critical for server workloads.
+- **Coz has limitations**: requires programs to use `pthreads` or similar, does not work well with spin-locks, and its virtual speedup technique can be imprecise for very short code regions. It does not support Windows.
