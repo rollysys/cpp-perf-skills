@@ -1,0 +1,85 @@
+name: Neoverse-N1
+arch: aarch64
+vendor: ARM
+
+pipeline:
+  issue_width: 4
+  dispatch_width: 8
+  reorder_buffer: 128
+  functional_units:
+    alu: 3
+    fp: 2
+    load: 2
+    store: 1
+    branch: 1
+
+registers:
+  gpr: 31
+  neon: 32
+
+cache:
+  l1d: { size_kb: 64, line_bytes: 64, associativity: 4, latency: 4 }
+  l1i: { size_kb: 64, line_bytes: 64, associativity: 4 }
+  l2:  { size_kb: 1024, line_bytes: 64, associativity: 8, latency: 11 }
+  l3:  { size_kb: 32768, line_bytes: 64, associativity: 16, latency: 40 }
+
+instructions:
+  integer:
+    add: { lat: 1, tp: 0.25 }
+    mul: { lat: 3, tp: 1 }
+    div: { lat: 12, tp: 12 }
+  fp:
+    fadd: { lat: 2, tp: 0.5 }
+    fmul: { lat: 3, tp: 0.5 }
+    fdiv: { lat: 7, tp: 7 }
+  neon:
+    vld1: { lat: 4, tp: 0.5 }
+    vst1: { lat: 1, tp: 0.5 }
+    vmul_f32: { lat: 4, tp: 0.5 }
+    fmla_f32: { lat: 4, tp: 0.5 }
+  memory:
+    load: { lat: 4, tp: 0.5 }
+    store: { lat: 1, tp: 0.5 }
+    prefetch: { lat: 0, tp: 0.25 }
+
+branch:
+  mispredict_penalty: 13
+  predictor_type: TAGE
+
+memory_system:
+  load_queue_depth: 56
+  store_queue_depth: 36
+  tlb_miss_penalty: 35
+  page_sizes_kb: [4, 64, 2048]
+
+os_overhead:
+  syscall: 400
+  thread_create: 12000
+  fork: 40000
+  cpu_migration: 4000
+  mutex_lock_unlock: 20
+  spinlock: 10
+  rwlock_read: 18
+  rwlock_write: 22
+  futex: 90
+  atomic_seq_cst: 28
+  atomic_acq_rel: 12
+  atomic_relaxed: 1
+  malloc_16b: 45
+  malloc_256b: 50
+  malloc_4kb: 70
+  malloc_1mb: 1800
+  mmap_anon: 2800
+  minor_page_fault: 700
+  major_page_fault: 45000
+  huge_page_alloc: 1100
+  file_open_close: 2800
+  read_4kb: 1300
+  write_4kb: 1600
+  fsync: 45000
+  pipe_roundtrip: 4500
+  eventfd_roundtrip: 2800
+  signal_delivery: 3500
+  sched_yield: 1800
+  timer_resolution_ns: 40
+  context_switch: 2500

@@ -1,0 +1,84 @@
+name: Cortex-A55
+arch: aarch64
+vendor: ARM
+
+pipeline:
+  issue_width: 2
+  dispatch_width: 2
+  reorder_buffer: 0
+  functional_units:
+    alu: 2
+    fp: 1
+    load: 1
+    store: 1
+    branch: 1
+
+registers:
+  gpr: 31
+  neon: 32
+
+cache:
+  l1d: { size_kb: 32, line_bytes: 64, associativity: 4, latency: 3 }
+  l1i: { size_kb: 32, line_bytes: 64, associativity: 2 }
+  l2:  { size_kb: 256, line_bytes: 64, associativity: 8, latency: 10 }
+
+instructions:
+  integer:
+    add: { lat: 1, tp: 0.5 }
+    mul: { lat: 3, tp: 1 }
+    div: { lat: 12, tp: 12 }
+  fp:
+    fadd: { lat: 4, tp: 1 }
+    fmul: { lat: 4, tp: 1 }
+    fdiv: { lat: 16, tp: 16 }
+  neon:
+    vld1: { lat: 5, tp: 1 }
+    vst1: { lat: 1, tp: 1 }
+    vmul_f32: { lat: 4, tp: 1 }
+    fmla_f32: { lat: 6, tp: 1 }
+  memory:
+    load: { lat: 3, tp: 1 }
+    store: { lat: 1, tp: 1 }
+    prefetch: { lat: 0, tp: 1 }
+
+branch:
+  mispredict_penalty: 8
+  predictor_type: bimodal
+
+memory_system:
+  load_queue_depth: 4
+  store_queue_depth: 4
+  tlb_miss_penalty: 20
+  page_sizes_kb: [4, 64, 2048]
+
+os_overhead:
+  syscall: 600
+  thread_create: 20000
+  fork: 60000
+  cpu_migration: 6000
+  mutex_lock_unlock: 30
+  spinlock: 15
+  rwlock_read: 25
+  rwlock_write: 30
+  futex: 120
+  atomic_seq_cst: 40
+  atomic_acq_rel: 20
+  atomic_relaxed: 1
+  malloc_16b: 60
+  malloc_256b: 65
+  malloc_4kb: 100
+  malloc_1mb: 2500
+  mmap_anon: 3500
+  minor_page_fault: 1000
+  major_page_fault: 60000
+  huge_page_alloc: 1500
+  file_open_close: 3500
+  read_4kb: 2000
+  write_4kb: 2200
+  fsync: 55000
+  pipe_roundtrip: 6000
+  eventfd_roundtrip: 3500
+  signal_delivery: 5000
+  sched_yield: 2500
+  timer_resolution_ns: 80
+  context_switch: 4000
