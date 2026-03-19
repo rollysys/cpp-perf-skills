@@ -83,3 +83,47 @@ For each identified issue, calculate an estimated performance impact:
   - **LOW**: depends on runtime data patterns
 
 Collect all issues into a list sorted by estimated impact (highest first).
+
+## Stage 3: Performance Report & User Decision
+
+Present findings as a graded report.
+
+**Output format:**
+
+Use exactly this structure:
+
+---
+
+## Performance Analysis Report
+
+**Target:** `<function_name>` in `<file_path>`
+**Platform:** <profile name> (<arch>)
+**Analysis date:** <date>
+
+### High Impact (estimated >20% improvement)
+
+N. [PN] <title> — <file>:<line>
+   - Current: <description>, estimated <X> cycles/iter
+   - After optimization: <description>, estimated <Y> cycles/iter
+   - Confidence: <HIGH|MEDIUM|LOW> (<reason>)
+   - Dependencies: <any prerequisites>
+
+### Medium Impact (estimated 5-20%)
+...
+
+### Low Impact (estimated <5%)
+...
+
+### Library Alternatives
+- `std::unordered_map` at <file>:<line> → consider `absl::flat_hash_map` (drop-in, ~2x faster lookup)
+...
+
+---
+
+**After presenting the report, ask:**
+
+> "Which items do you want to optimize? Enter numbers (e.g., 1,2), or 'all'.
+> Enter 'stop' if you only needed the report."
+
+If user says 'stop' or indicates they only want the report, end here.
+Otherwise, record selected items and proceed to Stage 4.
