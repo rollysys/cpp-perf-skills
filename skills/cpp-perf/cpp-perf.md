@@ -84,6 +84,63 @@ For each identified issue, calculate an estimated performance impact:
 
 Collect all issues into a list sorted by estimated impact (highest first).
 
+## Stage 2.5: Instrumentation Profiling (Optional)
+
+**When to use**: invoke this stage when static analysis has LOW confidence on multiple issues, or the user explicitly requests measurement ("profile this", "measure where time is spent").
+
+**Ask the user**: "Static analysis found N potential issues but I'm not confident about their relative impact. Want me to instrument and measure? (Requires target board)"
+
+If user declines, skip to Stage 3.
+
+### Instrumentation Flow
+
+**Level 1 — Function-level:**
+
+1. Read the probe header: `skills/cpp-perf/templates/cpp_perf_probe.h`
+2. Generate an instrumented version of the target code:
+   - Add `#include "cpp_perf_probe.h"` at the top
+   - For each function: insert `PROBE_SCOPE(N)` as the first statement (IDs: 1000-1999)
+   - Add `PROBE_REGISTER(id, "function_name")` calls at the top of main
+   - Add `profiler::probe_report()` at the end, before return
+3. Cross-compile → upload → run on target → capture JSON from stdout
+4. Parse the probe JSON report
+5. Present hotspot report:
+
+```
+## Instrumentation Report [L1]
+
+  function_a()   320.0ms   72.1%  ██████████████▍
+  function_b()    98.0ms   22.1%  ████▍
+  function_c()    25.0ms    5.6%  █▏
+  [other]          1.0ms    0.2%  ▏
+
+Hotspot: function_a() at file.cpp:42 — 72.1%
+```
+
+6. If a single function dominates (>70%), hotspot found → proceed to Stage 3
+7. Otherwise, drill down to L2
+
+**Level 2 — Region-level (hot functions only):**
+
+1. For the hot function, identify: loops, branches, call sites
+2. Insert `PROBE_BEGIN(N)` / `PROBE_END(N)` around each region (IDs: 2000-2999)
+   - Around loops (not per-iteration — measures total loop time)
+   - Around branch bodies
+3. Cross-compile → run → collect → report
+4. Identify regions consuming >20% of parent
+
+**Level 3 — Line-level (hot regions only):**
+
+1. For hot regions, insert probes every 3-5 statements (IDs: 3000-3999)
+2. For high-iteration loops (>64K): use sampling — `if (i % SAMPLE_RATE == 0) { PROBE_BEGIN/END }`
+3. Cross-compile → run → collect → report
+4. Narrow down to specific lines
+
+**After instrumentation completes:**
+- Use measured data to upgrade confidence levels (LOW/MEDIUM → HIGH) in the issue list
+- Reorder issues by measured impact
+- Proceed to Stage 3 with data-backed estimates
+
 ## Stage 3: Performance Report & User Decision
 
 Present findings as a graded report.
