@@ -236,3 +236,85 @@ If results deviate significantly from static estimates, explain possible causes:
 - Compiler already partially optimized
 - Cache effects not accounted for
 - Data-dependent behavior
+
+## Stage 5: Optimize, Verify & Compare
+
+### 5a. Generate Optimized Code
+
+For each selected issue with confirmed optimization opportunity (not retracted in 4c):
+
+1. Generate the optimized version of the code
+2. Explain each change:
+   - What was changed
+   - Why it is faster (reference platform profile data: instruction latencies, cache sizes, etc.)
+   - If a knowledge base pattern was used, cite the source
+
+### 5b. Correctness Verification
+
+1. Read the correctness template: `skills/cpp-perf/templates/correctness.cpp.tmpl`
+2. Fill in both baseline and optimized implementations
+3. Set `{{EPSILON}}` to `1e-6f` for float, `1e-12` for double (user can override)
+4. Generate a correctness check that:
+   - Runs both implementations with the same input
+   - Compares outputs element-by-element
+   - Reports first mismatch if any
+5. Cross-compile and run on target
+6. If correctness fails:
+   - Report the mismatch
+   - Fix the optimization
+   - Re-verify until passing
+
+### 5c. Compile, Disassemble & Execute Optimized Version
+
+Same process as Stage 4 (4b → 4c → 4d), but with the optimized implementation:
+
+1. Cross-compile the optimized benchmark
+2. Disassemble — verify expected instructions are present:
+   - If the optimization was vectorization, confirm NEON/AVX instructions
+   - If the optimization was branch elimination, confirm cmov/csel
+   - If expected instructions are missing, investigate and adjust
+3. Upload and execute on target
+4. Parse JSON results
+
+### 5d. Comparison Report
+
+Present the comparison:
+
+---
+
+## Optimization Result
+
+**[PN] <title> — <file>:<line>**
+
+| Metric | Baseline | Optimized |
+|--------|----------|-----------|
+| Median | Xns | Yns |
+| P99 | Xns | Yns |
+| Speedup | — | Z.ZZx |
+| Correctness | — | PASSED |
+
+**Changes:**
+- <bullet list of specific code changes>
+
+**Disassembly confirmation:**
+- <key instruction differences>
+
+---
+
+After presenting results for all selected issues, ask:
+
+> "Optimization complete.
+> - Accept these changes? I'll show the final optimized code for you to integrate.
+> - Try alternative approach for any item? (e.g., 'retry P1')
+> - Optimize additional items from the original report? (e.g., 'add P3')"
+
+## Stage 6: Iteration
+
+If the user requests an alternative approach:
+
+1. Analyze why the current optimization underperformed
+2. Propose a different strategy (e.g., if SIMD intrinsics didn't help much, try loop restructuring; if data structure change was too invasive, try algorithmic improvement)
+3. Return to Stage 5a with the new approach
+
+If the user wants additional items:
+1. Return to Stage 4 for the newly selected items
