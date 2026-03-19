@@ -140,6 +140,17 @@ double measure_ns_per_op(Fn fn, int ops_per_call, int iterations = 1000, int war
     return measure_ns(fn, iterations, warmup) / ops_per_call;
 }
 
+// Prevent compiler from optimizing away a value
+template <typename T>
+inline void escape(T const& val) {
+    asm volatile("" : : "r,m"(val) : "memory");
+}
+
+// Prevent reordering across this point
+inline void clobber() {
+    asm volatile("" ::: "memory");
+}
+
 // Legacy aliases
 template <typename Fn>
 double measure_cycles(Fn fn, int iterations = 1000, int warmup = 100) {
@@ -153,36 +164,61 @@ double measure_cycles_per_op(Fn fn, int ops_per_call, int iterations = 1000, int
 // ============================================================
 // Calibration: convert nanoseconds to CPU cycles
 // ============================================================
-// Uses a dependent integer-add chain (guaranteed 1 cycle latency on all
-// modern CPUs) to measure the ns-per-cycle ratio.  All profiler
-// measurements go through measure_ns(); this lets us convert to cycles.
-inline double calibrate_ns_per_cycle() {
-    static double ns_per_cyc = []() -> double {
-        constexpr int CHAIN = 1000000;
-        // Measure a dependent add chain (1 cycle latency per add)
-        double add_ns = measure_ns([&]() {
-            uint64_t val = 1;
-            for (int i = 0; i < CHAIN; i++) {
-                val = val + 7;
-                clobber();
+// Detect CPU frequency from OS, then ns_to_cycles = ns * freq_ghz
+
+} // temporarily close namespace for system headers
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#endif
+namespace profiler { // reopen
+
+inline double get_cpu_freq_ghz() {
+    static double freq = []() -> double {
+#if defined(__APPLE__)
+        uint64_t freq_hz = 0;
+        size_t sz = sizeof(freq_hz);
+        if (sysctlbyname("hw.cpufrequency_max", &freq_hz, &sz, nullptr, 0) == 0 && freq_hz > 0)
+            return freq_hz / 1e9;
+#elif defined(__linux__)
+        FILE* f = fopen("/proc/cpuinfo", "r");
+        if (f) {
+            char line[256];
+            while (fgets(line, sizeof(line), f)) {
+                double mhz;
+                if (sscanf(line, "cpu MHz : %lf", &mhz) == 1) {
+                    fclose(f);
+                    return mhz / 1000.0;
+                }
             }
-            escape(val);
-        }, 10, 2);
-        // Measure loop + clobber overhead
-        double overhead_ns = measure_ns([&]() {
-            uint64_t val = 1;
-            for (int i = 0; i < CHAIN; i++) {
-                clobber();
-            }
-            escape(val);
-        }, 10, 2);
-        double result = (add_ns - overhead_ns) / CHAIN;
-        // Sanity: clamp to plausible range (0.1 ns/cyc = 10 GHz, 2 ns/cyc = 0.5 GHz)
-        if (result < 0.1) result = 0.1;
-        if (result > 2.0) result = 2.0;
-        return result;
+            fclose(f);
+        }
+#endif
+        // Fallback: calibrate using a tight dependent-add chain.
+        // We know int add = 1 cycle on any modern CPU.
+        // Measure how long 10M dependent adds take in ns → ns_per_add ≈ ns_per_cycle.
+        constexpr int N = 10000000;
+        uint64_t val = 1;
+        auto t0 = Clock::now();
+        for (int i = 0; i < N; i++) {
+            val = val + 7;  // data dependency: each add depends on previous result
+            asm volatile("" : "+r"(val));  // prevent optimization, keep dependency
+        }
+        auto t1 = Clock::now();
+        escape(val);
+        double elapsed_ns = (double)std::chrono::duration_cast<ns>(t1 - t0).count();
+        // Each iteration = 1 cycle (add) + ~0 cycles (asm barrier is compiler-only)
+        double ns_per_cycle = elapsed_ns / N;
+        double ghz = 1.0 / ns_per_cycle;
+        // Sanity clamp: 0.5 - 6.0 GHz
+        if (ghz < 0.5) ghz = 0.5;
+        if (ghz > 6.0) ghz = 6.0;
+        return ghz;
     }();
-    return ns_per_cyc;
+    return freq;
+}
+
+inline double calibrate_ns_per_cycle() {
+    return 1.0 / get_cpu_freq_ghz();
 }
 
 inline double ns_to_cycles(double ns) {
@@ -230,17 +266,6 @@ inline void measure_or_skip(const std::string& section, const std::string& key,
     } else {
         fprintf(stderr, "    [skip] %s not supported on this CPU\n", name);
     }
-}
-
-// Prevent compiler from optimizing away a value
-template <typename T>
-inline void escape(T const& val) {
-    asm volatile("" : : "r,m"(val) : "memory");
-}
-
-// Prevent reordering across this point
-inline void clobber() {
-    asm volatile("" ::: "memory");
 }
 
 // ============================================================
