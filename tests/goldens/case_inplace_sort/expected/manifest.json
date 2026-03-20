@@ -1,0 +1,28 @@
+{
+  "function_name": "bubble_sort",
+  "issue_id": "golden_case_inplace_sort",
+  "return_type": "void",
+  "mutates_input": true,
+  "parameters": [
+    {
+      "name": "arr",
+      "type": "std::vector<int>&",
+      "description": "Array to sort in-place"
+    }
+  ],
+  "setup": {
+    "seed": 42,
+    "data_size": 256,
+    "distribution": "uniform_int(-10000, 10000)"
+  },
+  "benchmark": {
+    "warmup": 50,
+    "iterations": 500,
+    "reset_per_iteration": true,
+    "reset_expression": "data = setup_data();"
+  },
+  "optimization_opportunities": [
+    "algorithmic (std::sort)",
+    "early-exit on sorted"
+  ]
+}

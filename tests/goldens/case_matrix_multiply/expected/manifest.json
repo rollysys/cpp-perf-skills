@@ -1,0 +1,45 @@
+{
+  "function_name": "multiply",
+  "issue_id": "golden_case_matrix_multiply",
+  "return_type": "void",
+  "mutates_input": false,
+  "parameters": [
+    {
+      "name": "result",
+      "type": "Matrix&",
+      "description": "Output matrix (N x N)"
+    },
+    {
+      "name": "a",
+      "type": "const Matrix&",
+      "description": "Left input matrix (N x N)"
+    },
+    {
+      "name": "b",
+      "type": "const Matrix&",
+      "description": "Right input matrix (N x N)"
+    }
+  ],
+  "custom_types": [
+    {
+      "name": "Matrix",
+      "kind": "alias",
+      "definition": "std::array<std::array<float, 128>, 128>"
+    }
+  ],
+  "setup": {
+    "seed": 42,
+    "matrix_size": 128,
+    "distribution": "uniform_real(-1.0, 1.0)"
+  },
+  "benchmark": {
+    "warmup": 10,
+    "iterations": 100,
+    "reset_per_iteration": false
+  },
+  "optimization_opportunities": [
+    "loop interchange (k before j)",
+    "cache tiling",
+    "SIMD"
+  ]
+}

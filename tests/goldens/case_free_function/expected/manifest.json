@@ -1,0 +1,27 @@
+{
+  "function_name": "sum_array",
+  "issue_id": "golden_case_free_function",
+  "return_type": "double",
+  "mutates_input": false,
+  "parameters": [
+    {
+      "name": "data",
+      "type": "const std::vector<double>&",
+      "description": "Input array of doubles to sum"
+    }
+  ],
+  "setup": {
+    "seed": 42,
+    "data_size": 10000,
+    "distribution": "uniform_real(-1000.0, 1000.0)"
+  },
+  "benchmark": {
+    "warmup": 100,
+    "iterations": 1000,
+    "reset_per_iteration": false
+  },
+  "optimization_opportunities": [
+    "vectorization",
+    "multiple accumulators"
+  ]
+}

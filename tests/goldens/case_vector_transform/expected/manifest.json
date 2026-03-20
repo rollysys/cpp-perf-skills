@@ -1,0 +1,43 @@
+{
+  "function_name": "scale_and_clamp",
+  "issue_id": "golden_case_vector_transform",
+  "return_type": "void",
+  "mutates_input": true,
+  "parameters": [
+    {
+      "name": "data",
+      "type": "std::vector<float>&",
+      "description": "Vector of floats to scale and clamp in-place"
+    },
+    {
+      "name": "scale",
+      "type": "float",
+      "value": 2.5
+    },
+    {
+      "name": "min_val",
+      "type": "float",
+      "value": -1.0
+    },
+    {
+      "name": "max_val",
+      "type": "float",
+      "value": 1.0
+    }
+  ],
+  "setup": {
+    "seed": 42,
+    "data_size": 10000,
+    "distribution": "uniform_real(-2.0, 2.0)"
+  },
+  "benchmark": {
+    "warmup": 100,
+    "iterations": 1000,
+    "reset_per_iteration": true,
+    "reset_expression": "data = setup_data();"
+  },
+  "optimization_opportunities": [
+    "NEON vectorization",
+    "branchless clamp (std::min/std::max)"
+  ]
+}
