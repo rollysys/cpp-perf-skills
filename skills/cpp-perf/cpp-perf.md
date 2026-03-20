@@ -274,16 +274,41 @@ For each selected issue, generate a **complete, self-contained case directory** 
 
 ```json
 {
-  "case_id": "P1_loop_interchange",
-  "target_function": "multiply",
-  "target_file": "solution.cpp",
-  "target_line": 29,
-  "issue": "P1: column-major access in inner loop",
-  "platform": "cortex-a78",
-  "generated_at": "2026-03-20T00:30:00Z",
-  "input_seed": 42,
-  "input_size": 1024,
-  "mutating": false
+  "function_name": "multiply",
+  "issue_id": "P1_loop_interchange",
+  "return_type": "void",
+  "mutates_input": true,
+  "parameters": [
+    {
+      "name": "A",
+      "type": "const std::vector<double>&",
+      "description": "Left-hand matrix in row-major order"
+    },
+    {
+      "name": "B",
+      "type": "const std::vector<double>&",
+      "description": "Right-hand matrix in row-major order"
+    },
+    {
+      "name": "C",
+      "type": "std::vector<double>&",
+      "description": "Output matrix, written in place"
+    }
+  ],
+  "setup": {
+    "seed": 42,
+    "data_size": 1024,
+    "distribution": "uniform_real(-1.0, 1.0)"
+  },
+  "benchmark": {
+    "warmup": 100,
+    "iterations": 1000,
+    "reset_per_iteration": true
+  },
+  "optimization_opportunities": [
+    "loop interchange",
+    "cache blocking"
+  ]
 }
 ```
 
