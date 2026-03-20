@@ -2,6 +2,7 @@
 *.o
 *.d
 build/
+tests/goldens/*/expected/benchmark
 reference/
 /tmp/
 CLAUDE.md
