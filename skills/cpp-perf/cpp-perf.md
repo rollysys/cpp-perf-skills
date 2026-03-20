@@ -224,53 +224,131 @@ N. [PN] <title> — <file>:<line>
 If user says 'stop' or indicates they only want the report, end here.
 Otherwise, record selected items and proceed to Stage 4.
 
-## Stage 4: Benchmark, Compile & Baseline Measurement
+## Stage 4: Case Generation, Compile & Baseline Measurement
 
-For each selected issue, generate a benchmark, compile, analyze assembly, and run on the target.
+For each selected issue, generate a **complete, self-contained case directory** with all artifacts needed to build, run, and debug.
 
-### 4a. Benchmark Generation
+### 4a. Case Directory Generation
 
-1. Read the benchmark template: `skills/cpp-perf/templates/benchmark.cpp.tmpl`
-2. For each selected issue, fill in the template placeholders:
+**Every case MUST produce this directory structure:**
 
-| Placeholder | Fill with |
-|-------------|-----------|
-| `{{INCLUDES}}` | Required headers for the target code |
-| `{{SETUP_DATA}}` | `setup_data()` function that constructs test inputs |
-| `{{IMPLEMENTATION}}` | The target function (copied or wrapped) |
-| `{{FUNCTION_NAME}}` | Name of the function being benchmarked |
-| `{{ISSUE_ID}}` | Issue identifier (e.g., P1) |
-| `{{WARMUP_COUNT}}` | 1000 (default, adjust for very fast/slow functions) |
-| `{{ITERATION_COUNT}}` | 10000 (default, adjust for very fast/slow functions) |
-| `{{FUNCTION_CALL}}` | The actual call expression (e.g., `process(data)`) |
-| `{{RESET_DATA}}` | Empty if function is pure; `data = setup_data();` if function mutates input |
-
-3. **Construct test data** — follow this priority:
-
-| Parameter type | Strategy |
-|----------------|----------|
-| `int`, `float`, `double`, etc. | Random values within typical range + boundary values |
-| `std::vector<T>`, `std::array<T,N>` | Fill with random data, three sizes: small(16), medium(1024), large(65536) |
-| `std::string` | Typical strings for the domain (ask user if unclear) |
-| Custom struct/class | Read its definition, recursively construct each member |
-| Pointer/reference | Heap-allocate the pointed-to object |
-| Cannot determine | Ask the user with a specific question about typical values and sizes |
-
-4. Write the filled benchmark to a temporary file (e.g., `/tmp/cpp-perf/benchmark_P1.cpp`)
-5. Show the generated benchmark to the user and ask for confirmation before compiling
-
-### 4b. Cross-Compilation
-
-Read platform config from `cpp-perf-platform.yaml`:
-
-```bash
-<compiler> <compiler_flags> benchmark_P1.cpp -o benchmark_P1 -lm
+```
+/tmp/cpp-perf/<case-id>/
+  manifest.json         # metadata: target function, issue, platform, timestamps
+  benchmark.cpp         # standalone benchmark (compiles without project deps)
+  correctness.cpp       # baseline vs optimized comparison (added in Stage 5)
+  build.sh              # one-command build script
+  run.sh                # one-command run script
+  README.md             # what this case tests, expected results
 ```
 
-If compilation fails:
-1. Show the error
-2. Attempt to fix (missing includes, type mismatches)
-3. If unfixable, ask the user for help
+**Step 1 — Extract target:**
+
+| Input mode | Extraction method |
+|------------|-------------------|
+| `file+function` | Use `Grep` to find function definition, extract full function body + signature |
+| `diff` | Parse hunks, map each changed region to its enclosing function via `Grep` |
+| `snippet` | Wrap in a compilable function if not already one |
+
+**Step 2 — Collect minimal context** (only what's needed to compile):
+
+1. Scan the target function for `#include` directives and type references
+2. Use `Grep` to find definitions of referenced types (structs, classes, enums, typedefs)
+3. Collect directly called helper functions (1 level deep)
+4. Record required namespaces and macros
+5. **Stop here.** Do NOT try to reconstruct the whole project. If a dependency is too deep, ask the user.
+
+**Step 3 — Synthesize inputs:**
+
+| Parameter type | Strategy | Example |
+|----------------|----------|---------|
+| `int`, `float`, `double` | Fixed seed random + boundary values | `std::mt19937 gen(42); std::uniform_real_distribution<float> dist(-1.0f, 1.0f);` |
+| `std::vector<T>`, `std::array<T,N>` | Fill with random data using fixed seed, size = 1024 default | `std::vector<float> v(1024); for (auto& x : v) x = dist(gen);` |
+| `std::string` | Lorem-style or repeated pattern | `std::string s(256, 'a');` |
+| Custom struct/class | Read definition, recursively construct each member | `MyStruct s; s.x = dist(gen); s.y = dist(gen);` |
+| Pointer/reference | Heap-allocate, construct the pointed-to object | `auto* p = new MyStruct{...};` |
+| Mutating function | Mark for per-iteration reset in benchmark | `{{RESET_DATA}} = data = setup_data();` |
+| Cannot determine | Ask user with SPECIFIC question (not "what data?") | "How large is the typical input? 100 elements or 100K?" |
+
+**Step 4 — Generate manifest.json:**
+
+```json
+{
+  "case_id": "P1_loop_interchange",
+  "target_function": "multiply",
+  "target_file": "solution.cpp",
+  "target_line": 29,
+  "issue": "P1: column-major access in inner loop",
+  "platform": "cortex-a78",
+  "generated_at": "2026-03-20T00:30:00Z",
+  "input_seed": 42,
+  "input_size": 1024,
+  "mutating": false
+}
+```
+
+**Step 5 — Render benchmark.cpp:**
+
+Read template: `skills/cpp-perf/templates/benchmark.cpp.tmpl`
+
+Fill ALL placeholders:
+
+| Placeholder | Source |
+|-------------|--------|
+| `{{INCLUDES}}` | From context collection (Step 2) |
+| `{{SETUP_DATA}}` | From input synthesis (Step 3) — must be a `setup_data()` function |
+| `{{IMPLEMENTATION}}` | Target function + helpers (Step 1-2) |
+| `{{FUNCTION_NAME}}` | From target extraction |
+| `{{ISSUE_ID}}` | From manifest |
+| `{{WARMUP_COUNT}}` | 100 default. Adjust: <1μs function → 10000, >100ms → 10 |
+| `{{ITERATION_COUNT}}` | 1000 default. Same adjustment logic. |
+| `{{FUNCTION_CALL}}` | Exact call expression with synthesized args |
+| `{{RESET_DATA}}` | Empty if pure; `data = setup_data();` if mutating |
+
+**Step 6 — Generate build.sh and run.sh:**
+
+```bash
+#!/bin/bash
+# build.sh — generated by cpp-perf
+set -e
+COMPILER="${COMPILER:-g++}"
+FLAGS="${FLAGS:--O2 -std=c++17}"
+$COMPILER $FLAGS benchmark.cpp -o benchmark -lm
+echo "Build OK"
+```
+
+```bash
+#!/bin/bash
+# run.sh — generated by cpp-perf
+set -e
+./benchmark
+```
+
+**Step 7 — Write all files to case directory and show to user.**
+
+### 4b. Compile-Repair Loop
+
+Compile the benchmark. If it fails, **automatically attempt repair up to 3 times**:
+
+```
+Attempt 1: compile
+  → Success? → proceed to 4c
+  → Fail? → analyze error:
+    - "undeclared identifier" → add missing include or type definition
+    - "no matching function" → fix call expression or add overload
+    - "namespace" → add using-declaration or qualify
+    - "redefinition" → remove duplicate
+  → Re-compile (attempt 2)
+  → Still fails? → try different fix
+  → Re-compile (attempt 3)
+  → Still fails? → show user the error + generated code, ask for help
+```
+
+**Always add compiler optimization report flags:**
+- GCC: `-fopt-info-vec-missed`
+- Clang: `-Rpass-missed=loop-vectorize`
+
+Parse the optimization report output — if the compiler reports "loop not vectorized: <reason>", include this in the Stage 4c analysis.
 
 If the compiler is GCC, add `-fopt-info-vec-missed` to get vectorization report.
 If Clang, add `-Rpass-missed=loop-vectorize`.
