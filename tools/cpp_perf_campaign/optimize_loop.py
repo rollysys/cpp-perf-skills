@@ -80,7 +80,8 @@ OPTIMIZE_SCHEMA = {
         "files_touched": {"type": "array", "items": {"type": "string"}},
         "summary": {"type": "string"},
         "notes": {"type": "string"},
-        "terminal_state": {"type": "string", "enum": ["hardware_limit", "no_more_ideas"]},
+        "measured_baseline_ns": {"type": "number"},
+        "measured_optimized_ns": {"type": "number"},
     },
     "required": ["changed", "rebuild", "correctness", "files_touched", "summary", "notes"],
     "additionalProperties": False,
@@ -125,15 +126,21 @@ Rules:
 - Read the target file first.
 - Focus ONLY on the specified function. Do not optimize other functions.
 - Keep the patch small and high-confidence.
+
+Benchmarking (MANDATORY):
+- You MUST write a STANDALONE benchmark.cpp that compiles with `c++ -O2 -o benchmark benchmark.cpp`.
+- The benchmark must be SELF-CONTAINED: copy the function, synthesize inputs, measure timing.
+- Do NOT build the whole project. Do NOT use cmake/make on the project.
+- Do NOT use the project's test or benchmark infrastructure.
+- Run the benchmark BEFORE and AFTER optimization to get measured speedup.
+- Do NOT claim speedup without measured evidence.
+
+Optimization:
 - Prefer editing only the target file.
 - Do not explore unrelated directories.
-- Do not ask questions.
-- Do not create commits or branches.
-- You MUST write a standalone benchmark that compiles and runs to measure the effect.
-- Do NOT claim speedup without measured evidence from an actual benchmark run.
-- If there is no clear safe win, make no edits and return changed=false.
-- If you believe this code is at a hardware ceiling, set terminal_state to hardware_limit.
-- If you have exhausted all credible ideas, set terminal_state to no_more_ideas.
+- Do not ask questions or create commits.
+- If there is no clear safe win for THIS strategy, return changed=false.
+- Do NOT set terminal_state — the controller decides when to stop.
 - If you edit source files, set rebuild=true.
 - Set correctness=true only if behavior is preserved with high confidence.
 
@@ -193,7 +200,6 @@ def _run_claude_optimize(
         "--output-format", "json",
         "--json-schema", json.dumps(OPTIMIZE_SCHEMA, separators=(",", ":")),
         "--permission-mode", "bypassPermissions",
-        "--no-session-persistence",
         "--no-chrome",
         "--setting-sources", "project,local",
         "--append-system-prompt",
@@ -229,7 +235,13 @@ def _run_claude_optimize(
 
     try:
         envelope = json.loads(process.stdout)
-        return envelope.get("structured_output", {})
+        result = envelope.get("structured_output", {})
+        # Preserve session_id for potential manual resume
+        session_id = envelope.get("session_id")
+        if session_id:
+            result["_session_id"] = session_id
+            write_json(case_dir / "session_id.txt", {"session_id": session_id})
+        return result
     except (json.JSONDecodeError, KeyError):
         return {"changed": False, "error": "Failed to parse Claude output"}
 
@@ -346,15 +358,10 @@ def run_loop(
             write_json(case_dir / "optimize_result.json", optimize_result)
 
             changed = bool(optimize_result.get("changed", False))
-            terminal = optimize_result.get("terminal_state")
             summary = str(optimize_result.get("summary", ""))
             notes = str(optimize_result.get("notes", ""))
             error = optimize_result.get("error")
             files_touched = optimize_result.get("files_touched", [])
-
-            if isinstance(terminal, str) and terminal in TERMINAL_STATES:
-                print(f"  Terminal state: {terminal}")
-                state.terminal_reason = terminal
 
             if error:
                 record = AttemptRecord(
@@ -365,8 +372,6 @@ def run_loop(
                 state.attempts.append(record)
                 write_json(case_dir / "attempt.json", asdict(record))
                 print(f"  Error: {error}")
-                if state.terminal_reason:
-                    break
                 continue
 
             if not changed:
@@ -378,8 +383,6 @@ def run_loop(
                 state.attempts.append(record)
                 write_json(case_dir / "attempt.json", asdict(record))
                 print(f"  No changes made: {summary}")
-                if state.terminal_reason:
-                    break
                 continue
 
             # Benchmark optimized version
@@ -415,10 +418,9 @@ def run_loop(
             state.attempts.append(record)
             write_json(case_dir / "attempt.json", asdict(record))
 
-            if state.terminal_reason:
-                break
-
         # Summary
+        if not state.terminal_reason:
+            state.terminal_reason = "all_strategies_exhausted"
         write_json(output_root / "loop_state.json", asdict(state))
         print(f"\n=== Loop complete ===")
         print(f"Attempts: {len(state.attempts)}")
