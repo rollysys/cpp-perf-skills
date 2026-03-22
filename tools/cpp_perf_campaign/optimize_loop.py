@@ -97,6 +97,9 @@ def _build_optimize_prompt(
     strategy: str,
     state: LoopState,
     case_dir: Path,
+    scope_context: str = "",
+    function_name: str | None = None,
+    function_lines: str | None = None,
 ) -> str:
     history_section = ""
     if state.attempts:
@@ -105,18 +108,29 @@ def _build_optimize_prompt(
             lines.append(f"- {a.strategy}: {a.outcome}, speedup={a.speedup:.4f}, summary={a.summary}")
         history_section = f"\nPrevious attempts on this target:\n" + "\n".join(lines) + "\n"
 
+    scope_section = f"\n{scope_context}\n" if scope_context else ""
+
+    if function_name:
+        focus = f"Function: `{function_name}` (lines {function_lines})"
+    else:
+        focus = "Optimize the most impactful function in the file."
+
     return f"""Perform one bounded C++ optimization attempt.
 
 Target file: `{target_path}`
+{focus}
 Strategy focus: `{strategy}`
-{history_section}
+{scope_section}{history_section}
 Rules:
 - Read the target file first.
+- Focus ONLY on the specified function. Do not optimize other functions.
 - Keep the patch small and high-confidence.
 - Prefer editing only the target file.
 - Do not explore unrelated directories.
 - Do not ask questions.
 - Do not create commits or branches.
+- You MUST write a standalone benchmark that compiles and runs to measure the effect.
+- Do NOT claim speedup without measured evidence from an actual benchmark run.
 - If there is no clear safe win, make no edits and return changed=false.
 - If you believe this code is at a hardware ceiling, set terminal_state to hardware_limit.
 - If you have exhausted all credible ideas, set terminal_state to no_more_ideas.
@@ -159,9 +173,15 @@ def _run_claude_optimize(
     state: LoopState,
     case_dir: Path,
     settings_path: Path | None = None,
+    scope_context: str = "",
+    function_name: str | None = None,
+    function_lines: str | None = None,
 ) -> dict[str, object]:
     """Call claude -p for one optimization attempt."""
-    prompt = _build_optimize_prompt(target_path, strategy, state, case_dir)
+    prompt = _build_optimize_prompt(
+        target_path, strategy, state, case_dir, scope_context,
+        function_name=function_name, function_lines=function_lines,
+    )
     (case_dir / "optimize_prompt.txt").write_text(prompt, encoding="utf-8")
 
     claude_bin = os.environ.get("CPP_PERF_CLAUDE_BIN", "claude").strip() or "claude"
@@ -217,21 +237,76 @@ def _run_claude_optimize(
 def run_loop(
     repo_root: Path,
     target: str,
-    strategies: list[str],
+    strategies: list[str] | None = None,
     benchmark_path: str | None = None,
     keep_threshold: float = 1.03,
     output_dir: Path | None = None,
+    function_name: str | None = None,
 ) -> LoopState:
-    """Run the full optimization loop with worktree isolation."""
+    """Run the full optimization loop with worktree isolation.
+
+    If *strategies* is None or empty, the scope analyzer determines
+    which strategies to try based on the target's AST structure.
+
+    If *function_name* is given, scope analysis and optimization are
+    scoped to that specific function rather than the whole file.
+    """
+    from .scope_analyzer import analyze, analyze_file, extract_functions, profile_to_prompt_context
+
+    output_root = output_dir or (repo_root / ".cpp-perf" / "loops" / target.replace("/", "_"))
+    ensure_dir(output_root)
+    settings_path = repo_root / ".claude" / "settings.json"
+
+    # --- Scope analysis (before worktree, on original file) ---
+    target_source = repo_root / target
+    if not target_source.exists():
+        print(f"Target not found: {target_source}")
+        return LoopState(target=target, repo_root=str(repo_root),
+                         strategies=[], terminal_reason="target_not_found")
+
+    # Function-level analysis
+    function_lines = None
+    if function_name:
+        functions = extract_functions(target_source)
+        match = [f for f in functions if f.name == function_name]
+        if not match:
+            # Try partial match
+            match = [f for f in functions if function_name in f.name]
+        if match:
+            func_target = match[0]
+            scope_profile = func_target.profile
+            function_lines = func_target.line_range
+            print(f"Function: {func_target.name} L{function_lines}")
+        else:
+            print(f"Function '{function_name}' not found. Available:")
+            for f in functions[:10]:
+                print(f"  {f.name} L{f.line_range}")
+            return LoopState(target=target, repo_root=str(repo_root),
+                             strategies=[], terminal_reason="function_not_found")
+    else:
+        scope_profile = analyze_file(target_source)
+
+    scope_context = profile_to_prompt_context(scope_profile)
+    write_json(output_root / "scope_profile.json", asdict(scope_profile))
+    print(f"Scope: {scope_profile.code_type} / {scope_profile.scope_depth}")
+
+    if scope_profile.skip_reason:
+        print(f"Skipping: {scope_profile.skip_reason}")
+        return LoopState(target=target, repo_root=str(repo_root),
+                         strategies=[], terminal_reason=f"skip:{scope_profile.skip_reason}")
+
+    # Use classifier strategies if user didn't specify
+    if not strategies:
+        strategies = scope_profile.recommended_strategies
+        print(f"Auto strategies ({scope_profile.max_strategies}): {', '.join(strategies)}")
+    else:
+        print(f"User strategies: {', '.join(strategies)}")
+
     state = LoopState(
         target=target,
         repo_root=str(repo_root),
         strategies=strategies,
     )
-
-    output_root = output_dir or (repo_root / ".cpp-perf" / "loops" / target.replace("/", "_"))
-    ensure_dir(output_root)
-    settings_path = repo_root / ".claude" / "settings.json"
 
     branch_name = f"cpp-perf/{target.replace('/', '_')}_{int(time.time())}"
     worktree = wt.create(repo_root, branch_name)
@@ -261,9 +336,12 @@ def run_loop(
             else:
                 baseline_ns = 0.0
 
-            # Optimize
+            # Optimize (with scope context + function focus injected)
             optimize_result = _run_claude_optimize(
                 worktree.path, target_path, strategy, state, case_dir, settings_path,
+                scope_context=scope_context,
+                function_name=function_name,
+                function_lines=function_lines,
             )
             write_json(case_dir / "optimize_result.json", optimize_result)
 
@@ -374,14 +452,18 @@ def main() -> None:
     parser.add_argument("--repo-root", required=True, help="Path to the target repository")
     parser.add_argument("--target", required=True, help="Relative path to the target file")
     parser.add_argument("--benchmark", default=None, help="Benchmark path (e.g. benchmark/micro/...)")
-    parser.add_argument("--strategies", default="vectorize,layout,branch,prefetch",
-                        help="Comma-separated optimization strategies")
+    parser.add_argument("--function", default=None, help="Function name to optimize (omit for whole file)")
+    parser.add_argument("--strategies", default=None,
+                        help="Comma-separated strategies (omit to auto-detect from AST)")
     parser.add_argument("--keep-threshold", type=float, default=1.03, help="Minimum speedup to keep")
     parser.add_argument("--output-dir", default=None, help="Output directory for loop artifacts")
     args = parser.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
-    strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
+    strategies = (
+        [s.strip() for s in args.strategies.split(",") if s.strip()]
+        if args.strategies else None
+    )
     output_dir = Path(args.output_dir).resolve() if args.output_dir else None
 
     state = run_loop(
@@ -391,6 +473,7 @@ def main() -> None:
         benchmark_path=args.benchmark,
         keep_threshold=args.keep_threshold,
         output_dir=output_dir,
+        function_name=args.function,
     )
     print(json.dumps(asdict(state), indent=2))
 
