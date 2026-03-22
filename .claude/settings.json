@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/x/cpp_perf_skills/tools/cpp_perf_campaign/hooks/audit_hook.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/x/cpp_perf_skills/tools/cpp_perf_campaign/hooks/audit_hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

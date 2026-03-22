@@ -1,10 +1,15 @@
 .DS_Store
 *.o
 *.d
+*.pyc
+__pycache__/
 build/
+skills/cpp-perf/profiler/build/
 tests/goldens/*/expected/benchmark
 reference/
 /tmp/
+.cpp-perf/
 CLAUDE.md
 codex_review.md
+codex_resume.md
 AGENTS.md
