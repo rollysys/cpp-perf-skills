@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cclsp": {
+      "command": "cclsp",
+      "args": [],
+      "env": {}
+    }
+  }
+}

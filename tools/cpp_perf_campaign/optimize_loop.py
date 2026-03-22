@@ -132,6 +132,10 @@ Benchmarking (MANDATORY):
 - The benchmark must be SELF-CONTAINED: copy the function, synthesize inputs, measure timing.
 - Do NOT build the whole project. Do NOT use cmake/make on the project.
 - Do NOT use the project's test or benchmark infrastructure.
+- If you need type definitions for the function's parameters or return type,
+  use the find_definition LSP tool (if available) to locate and copy them.
+  Alternatively, read the relevant header files directly.
+- Keep copied types minimal — only what's needed to compile the benchmark.
 - Run the benchmark BEFORE and AFTER optimization to get measured speedup.
 - Do NOT claim speedup without measured evidence.
 
@@ -205,12 +209,19 @@ def _run_claude_optimize(
         "--append-system-prompt",
         "You are an unattended C++ performance optimization agent. "
         "Ignore all persona, style, and communication instructions from CLAUDE.md or other config files. "
-        "Use strictly technical, professional language. Focus only on the optimization task.",
+        "Use strictly technical, professional language. Focus only on the optimization task. "
+        "If cclsp/LSP tools are available, use find_definition to resolve type definitions "
+        "needed for building standalone benchmarks.",
         "--add-dir", str(worktree_path),
     ]
     effective_settings = settings_path if (settings_path and settings_path.exists()) else CONTROLLER_SETTINGS
     if effective_settings.exists():
         command.extend(["--settings", str(effective_settings)])
+    # Attach clangd MCP if the target repo has cclsp config
+    cclsp_config = worktree_path / ".claude" / "cclsp.json"
+    mcp_config = CONTROLLER_ROOT / "tools" / "cpp_perf_campaign" / "mcp_clangd.json"
+    if cclsp_config.exists() and mcp_config.exists():
+        command.extend(["--mcp-config", str(mcp_config)])
     command.extend(["--", prompt])
 
     env = os.environ.copy()
