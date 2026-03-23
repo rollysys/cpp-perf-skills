@@ -318,6 +318,29 @@ def run_loop(
         return LoopState(target=target, repo_root=str(repo_root),
                          strategies=[], terminal_reason=f"skip:{scope_profile.skip_reason}")
 
+    # Extract compilation context if compile_commands.json exists
+    compile_context = ""
+    cc_path = repo_root / "compile_commands.json"
+    if not cc_path.exists():
+        cc_path = repo_root / "build" / "dev" / "compile_commands.json"
+    if cc_path.exists() and function_name:
+        try:
+            from .extract_context import extract_context as do_extract
+            ctx = do_extract(cc_path, target, function_name, repo_root, output_root)
+            if "error" not in ctx:
+                compile_context = (
+                    f"\n## Compilation Context (auto-extracted)\n"
+                    f"- Compile with: `c++ {ctx['compile_flags_inline']} benchmark.cpp`\n"
+                    f"- Key includes: {', '.join(ctx['source_includes'][:5])}\n"
+                    f"- Type→header mapping: {json.dumps(ctx['type_headers'], indent=2)}\n"
+                    f"- {ctx['hint']}\n"
+                )
+                print(f"Extracted compile context: {len(ctx['type_headers'])} type mappings")
+        except Exception as exc:
+            print(f"Context extraction failed (non-fatal): {exc}")
+
+    scope_context = scope_context + compile_context
+
     # Use classifier strategies if user didn't specify
     if not strategies:
         strategies = scope_profile.recommended_strategies
