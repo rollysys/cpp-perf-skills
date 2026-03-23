@@ -1,4 +1,4 @@
-"""Campaign controller for continuous cpp-perf optimization."""
+"""Lightweight C++ performance optimization toolkit."""
 
 __all__ = ["__version__"]
 
